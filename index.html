@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0b0b14">
+<title>Pixel Horde 1.17.1</title>
+<link rel="icon" href="favicon.png" type="image/png">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="wrap"><canvas id="cv"></canvas></div>
+
+<div id="hudBtns" hidden>
+  <button id="bPause" class="pxbtn small" aria-label="Pause">II</button>
+  <button id="bBag" class="abil bagbtn" aria-label="Bag" title="Bag (filter: Settings)"><i class="ico bagico" aria-hidden="true"></i><span class="bagct">0/10</span></button>
+  <button id="bA1" class="abil" aria-label="Dash Strike"><i class="ico"></i><b class="cd"></b><span class="lbl">DASH</span></button>
+  <button id="bA2" class="abil big" aria-label="Frost Nova"><i class="ico"></i><b class="cd"></b><span class="lbl">NOVA</span></button>
+</div>
+
+<section id="bag" class="screen modal" hidden>
+  <div class="card bagcard">
+    <div class="sk-top"><button id="bBagClose" class="pxbtn small" aria-label="Close bag">◀ CLOSE</button><h2>BACKPACK</h2><span class="tiny" id="bagCount"></span><span class="tiny">· time is frozen</span><span id="bagLootNote" class="tiny" aria-label="Loot filter (Settings only)">HIDE COMMON · set in Settings</span></div>
+    <div class="bagbody">
+      <div class="bagl">
+        <div class="bcol"><div class="tiny">EQUIPPED</div><div id="gearGrid"></div></div>
+        <div class="bcol"><div class="tiny brow">BAG <button id="bJunkAll" class="pxbtn mini" aria-label="Junk every worse item in the bag">JUNK ▼</button></div><div id="bagList"></div><div class="tiny" id="groundLbl">ON THE GROUND</div><div id="groundList"></div></div>
+      </div>
+      <div class="bagr"><div id="bagDetail"></div></div>
+    </div>
+    <div class="bagacts" id="bagActs"><button id="bEquip" class="pxbtn go">EQUIP</button><button id="bTake" class="pxbtn small" hidden>TAKE</button><button id="bDiscard" class="pxbtn small">JUNK</button><button id="bLock" class="pxbtn small">LOCK</button></div>
+  </div>
+</section>
+
+<section id="market" class="screen modal" hidden>
+  <div class="card bagcard mkcard">
+    <div class="sk-top"><h2>MARKET</h2><span class="tiny" id="mkTime">· time is frozen</span><span class="tiny gold mkgold" id="mkGold">BANK 0G</span></div>
+    <div class="bagbody">
+      <div class="bagl mkl">
+        <div class="bcol"><div class="tiny">FOR SALE · tap to inspect</div><div id="mkStock"></div><div class="tiny">WORN · SELL</div><div id="mkGear"></div></div>
+        <div class="bcol"><div class="tiny" id="mkBagLbl">YOUR BAG · SELL</div><div id="mkBag"></div></div>
+      </div>
+      <div class="bagr"><div id="mkDetail"></div>
+        <div class="row"><button id="mA" class="pxbtn go">BUY</button><button id="mB" class="pxbtn small">BUY TO BAG</button><button id="mLeave" class="pxbtn small">LEAVE ▶</button></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="wipe" class="screen" hidden>
+  <div class="sk-top"><button class="pxbtn small back">◀</button><h2>RESET PROGRESS</h2><span class="tiny c-bad">wipes your whole save · cannot be undone</span></div>
+  <div class="card wipecard">
+    <p>This deletes <b>everything</b> and starts Pixel Horde like a fresh install:</p>
+    <ul id="wipeList"></ul>
+    <p class="tiny" id="wipeHint">Only want your shared skill points back? Use <b>SKILLS → RESPEC</b> instead (free, keeps everything else).</p>
+    <div id="wipeS1" class="row"><button id="bWipe1" class="pxbtn go">I UNDERSTAND · CONTINUE</button><button id="bWipeNo1" class="pxbtn small">CANCEL</button></div>
+    <div id="wipeS2" hidden><p>Step 2 of 2: type <b>WIPE</b> below, then tap WIPE SAVE.</p>
+      <div class="row"><input id="wipeIn" type="text" inputmode="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="8" placeholder="type WIPE" aria-label="Type WIPE to confirm"><button id="bWipe2" class="pxbtn go" disabled>WIPE SAVE</button><button id="bWipeNo" class="pxbtn small">CANCEL</button></div></div>
+  </div>
+</section>
+
+<section id="settings" class="screen modal" hidden>
+  <div class="card setcard">
+    <div class="sk-top"><button id="bSetBack" class="pxbtn small" aria-label="Back">◀</button><h2>SETTINGS</h2><span class="tiny" id="setWhere"></span></div>
+    <div class="setrow"><span class="setk">SOUND</span><button id="bSndS" class="pxbtn small">♪ ON</button><span class="tiny">mutes everything (effects + music)</span></div>
+    <div class="setrow"><span class="setk">MUSIC</span><button id="bMusS" class="pxbtn small">♫ ON</button><span class="tiny">music only; effects stay on</span></div>
+    <div class="setrow"><span class="setk">BANNERS</span><button id="bBannerS" class="pxbtn small">BANNER: NORMAL</button><span class="tiny">wave / boss announcements</span></div>
+    <div class="setrow"><span class="setk">VERBOSE HUD</span><button id="bVerboseHud" class="pxbtn small">OFF</button><span class="tiny" id="setHudTxt">CLEAN: HP / gold / wave + arrows (default)</span></div>
+    <div class="setrow"><span class="setk">SCREEN SHAKE</span><button id="bShake" class="pxbtn small on">ON</button><span class="tiny" id="setShakeTxt">camera kick on hits (capped)</span></div>
+    <div class="setrow"><span class="setk">LOOT</span><button id="bLootC" class="pxbtn small">HIDE</button><span class="tiny">Common</span><button id="bLootM" class="pxbtn small">SHOW</button><span class="tiny">Magic</span><button id="bLootConv" class="pxbtn small on">ON</button><span class="tiny" id="setLootTxt">convert filtered junk → gold</span></div>
+    <div class="setrow"><span class="setk">PREMIUM</span><b id="setPrem">FREE</b><button id="bPremBuy" class="pxbtn small go">GET PREMIUM</button><button id="bPremRestore" class="pxbtn mini">RESTORE</button><span class="tiny" id="setPremTxt"></span></div>
+    <div class="setrow"><span class="setk">PROGRESS</span><button id="bWipe" class="pxbtn small wipeb" aria-label="Reset all progress">RESET PROGRESS</button><span class="tiny" id="setWipeTxt">wipes your whole save (2-step confirm)</span></div>
+    <p class="tiny setabout" id="setAbout"></p>
+  </div>
+</section>
+
+<section id="hub" class="screen">
+  <div class="hub-l">
+    <h1 class="logo">PIXEL<br>HORDE</h1>
+    <div id="hubBeta" class="hubbeta" role="status" aria-live="polite">Welcome to beta testing!</div>
+    <div class="ver">v<span id="ver"></span> · tester pack <span id="hPrem" class="gold"></span></div>
+    <div class="best" id="best"></div>
+    <canvas id="hubVillage" width="240" height="120" aria-label="Your village"></canvas>
+  </div>
+  <div class="hub-r">
+    <div class="card hero">
+      <i id="heroIco"></i>
+      <div class="hero-txt">
+        <div class="hero-name"><b id="hName">WANDERER</b> <span id="hLv"></span></div>
+        <div class="tiny" id="hKitA"></div>
+        <div class="bar"><i id="hXp"></i></div>
+        <div class="tiny" id="hXpTxt"></div>
+        <div class="tiny" id="hHeroLv"></div>
+      </div>
+      <button id="bHero" class="pxbtn small">HERO</button>
+    </div>
+    <div class="kit tiny"><span class="gold">● <b id="hGold">0</b> gold</span> · <span id="hKit"></span></div>
+    <div class="kit tiny" id="hRes"></div>
+    <div class="startrow"><button id="bStart" class="pxbtn go">START RUN · ASHEN FIELD</button><button id="bMap" class="pxbtn small" hidden aria-label="Change map">⇄ MAP</button><button id="bPortal" class="pxbtn small" hidden aria-label="Portal drop wave">⊙ OFF</button></div>
+    <div class="kit tiny" id="hPortal" hidden></div>
+    <div class="kit tiny zone" id="hMap" hidden></div>
+    <div class="startrow homerow"><button id="bHome" class="pxbtn wide"><span id="homeLbl">VILLAGE</span> <span id="homeBadge" class="badge"></span></button><button id="bRaid" class="pxbtn small" hidden aria-label="Raid board"><span id="raidLbl">🏆 RAIDS</span> <span id="raidBadge" class="badge"></span></button><button id="bStash" class="pxbtn small" aria-label="Stash and loadout"><span id="stashLbl">▣ STASH</span></button></div>
+    <div class="row">
+      <button id="bSkills" class="pxbtn">SKILLS <span id="spBadge" class="badge"></span><span id="hpBadge" class="badge hb"></span></button>
+      <button id="bUnlocks" class="pxbtn">UNLOCKS</button>
+      <button id="bGuide" class="pxbtn">GUIDE</button>
+      <button id="bHow" class="pxbtn">HOW TO</button>
+      <button id="bSupport" class="pxbtn small sup" aria-label="Support the creator" title="Support the creator">♥</button>
+      <span class="rowbrk" aria-hidden="true"></span>
+      <button id="bSnd" class="pxbtn small">♪</button>
+      <button id="bBanner" class="pxbtn small">BANNER: NORMAL</button>
+      <button id="bMus" class="pxbtn small" aria-label="Music on/off">♫ ON</button>
+      <button id="bSet" class="pxbtn small" aria-label="Settings">⚙</button>
+      <button id="bFb" class="pxbtn small go" aria-label="Send feedback">✉ FEEDBACK</button>
+    </div>
+  </div>
+</section>
+
+<section id="skills" class="screen" hidden>
+  <div class="sk-l">
+    <div class="sk-top"><button class="pxbtn small back">◀</button><div class="seg"><button id="tabShared" class="segb on">SHARED</button><button id="tabHero" class="segb">HERO</button></div><h2 id="skTitle">SHARED TREE</h2><span class="tiny" id="skPts"></span></div>
+    <div id="hxBar" class="bar hxbar" hidden><i id="hxFill"></i><span class="tiny" id="hxTxt"></span></div>
+    <div id="tree"><svg id="treeLines"></svg></div>
+    <div id="heroChips" hidden></div>
+  </div>
+  <div class="sk-r card">
+    <div id="skDetail"></div>
+    <div class="row"><button id="bLearn" class="pxbtn go">LEARN</button><button id="bRespec" class="pxbtn small" aria-label="Refund shared-tree points">RESPEC</button></div>
+  </div>
+</section>
+
+<section id="home" class="screen" hidden>
+  <div class="sk-top"><button class="pxbtn small back">◀</button><h2>VILLAGE</h2><span class="tiny gold" id="homeGold"></span><span class="tiny" id="homeScore"></span></div>
+  <div class="homebody">
+    <div class="vwrap"><canvas id="villageCv" width="280" height="140" aria-label="Village view: tap a plot"></canvas><div class="tiny heir" id="homeHeir"></div></div>
+    <div id="homeList"></div>
+  </div>
+</section>
+
+<section id="heroes" class="screen" hidden>
+  <div class="sk-top"><button class="pxbtn small back">◀</button><h2>HERO HALL</h2><span class="tiny gold" id="heroGold"></span></div>
+  <div class="tiny heir" id="heroNote"></div>
+  <div id="heroList"></div>
+</section>
+
+<section id="raids" class="screen" hidden>
+  <div class="sk-top"><button class="pxbtn small back">◀</button><h2>RAID BOARD</h2><span class="tiny gold" id="raidSum"></span></div>
+  <div class="tiny heir" id="raidNote"></div>
+  <div id="raidList"></div>
+</section>
+
+<section id="unlocks" class="screen" hidden>
+  <div class="sk-top"><button class="pxbtn small back">◀</button><h2>UNLOCKS</h2><span class="tiny">Go further to open new maps and heroes</span></div>
+  <div id="unlockList"></div>
+</section>
+
+<section id="stash" class="screen" hidden>
+  <div class="sk-top"><button id="bStashClose" class="pxbtn small back" aria-label="Close stash">◀ BACK</button><h2>STASH + LOADOUT</h2><span class="tiny gold" id="stGold"></span><span class="tiny" id="stInfo"></span><button id="stAuto" class="pxbtn small filt">AUTO-KIT BEST</button></div>
+  <div class="stbody">
+    <div class="stcol"><div class="sthd tiny" id="stLoadHd"></div><div class="strow" id="stLoad"></div>
+      <div class="sthd tiny" id="stStashHd"></div><div class="stgrid" id="stGrid"></div></div>
+    <div class="stdet card" id="stDet"></div>
+  </div>
+</section>
+
+<section id="howto" class="screen" hidden>
+  <div class="sk-top"><button class="pxbtn small back">◀</button><h2>HOW TO PLAY</h2></div>
+  <div class="how card">
+    <p><b>Left thumb</b> anywhere on the left half: move. Your weapon <b>auto-aims</b> the nearest monster.</p>
+    <p>The two round buttons (right) are your <b>hero's abilities</b>. The Wanderer has <b>DASH</b> + <b>NOVA</b>; the Pyromancer, Ranger and Bone Knight each bring their own pair and a passive. Recruit and pick heroes at the <b>Hero Hall</b>.</p>
+    <p>Elites (glowing) and bosses drop <b>gear for 9 slots</b>: weapon, helmet, amulet, chest, gloves, ring, belt, pants, boots. Walk over loot to drop it in your <b>BAG</b> (10 slots) without stopping. Tap <b>BAG</b> any time: time freezes while you compare (▲/▼ POWER), equip into the matching slot, or <b>JUNK</b> it (junk is deleted, it never lands on the floor). Loot lying near you shows under <b>ON THE GROUND</b>: inspect, EQUIP, TAKE or JUNK it without bagging it first. <b>JUNK ▼</b> clears every bag item that's worse than what you wear. The <b>LOOT</b> filter (Settings only) hides Commons, or everything below Rare, so they never drop; boss and mini-boss loot always drops. It applies to ground and bag. <span class="c-magic">Magic</span> and <span class="c-rare">Rare</span> items roll affixes; armour rolls smaller, slot-specific ones.</p>
+    <p><b>1.9.5 RAID REMATCHES:</b> every raid boss remembers how often you beat it. Clear it N times and the next fight is <b>rematch tier N</b>: more boss HP, harder hits, slightly faster casts and telegraphs, but more gold and XP, more and better Rares, a bigger Unique chance and a better Quartermaster fill. Steps are big for the first 5 clears, then shrink (soft cap around tier 10). The first kill is still the trophy.</p>
+    <p><b>1.12.0 COMBAT CEILING:</b> late waves punish standing still. <b>Poison</b> now stacks up to <b>24</b> (it still never kills on its own, and DASH sheds a quarter of the pile). <b>Statuses stack too</b> (up to x5, the number shows on the tile): each bolt or pulse that hits again makes SLOWED / WEAKENED / FRAGILE worse, standing in a hex cloud adds a stack every 2 s, and NO REGEN at x2+ slowly <b>rots</b> your HP. Hex Orbs and hex casters fire <b>fans of status bolts</b> late (every bolt shows its coloured aim line). Some foes grow a <b>gold shell</b> after a flashing ring tell: it is <b>immune</b> for 2 s and charges you, so kite it until the shell breaks (then it takes +25% for a moment).</p>
+    <p><b>1.11.1 SUPPORT + PREMIUM:</b> there are <b>no ads between runs</b> any more. Tap the <b>♥</b> button on the hub (next to HOW TO) to support the creator: <b>watch an ad</b> (a thank-you + a ♥ on your hub, as often as you like) or <b>buy PREMIUM</b> once. Premium doubles your stash (12 / 24 / 40 → <b>24 / 48 / 80</b>), adds an <b>endless ★ UNIQUES tab</b> (every Unique you extract goes there, never counts against the stash and is never salvaged, so you can collect them all), and makes the <b>once-per-run revive</b> (and, from 1.13, the death-screen <b>save one</b>) free. When you go down after your Hearth lives, the game asks once per run: <b>revive instead of dying right now?</b></p>
+    <p><b>1.13.0 LOADOUT + STASH (no insurance):</b> gear you find is only safe once you <b>extract</b> (exit gate or a won raid): then <b>everything</b> you carry is banked. Pieces you took from your loadout go back into the loadout; the rest goes to your <b>STASH</b> (12 slots, 24 with the Armory, 40 with the Artifact Museum; when it is full the weakest pieces are salvaged for gold). Between runs, open <b>▣ STASH</b> and pick your <b>LOADOUT</b>: the stash pieces you take into the next run (<b>3</b> slots, <b>6</b> with the Armory, <b>9</b> with the Museum). They are equipped at START, free. <b>Die or abandon</b> before extracting and <b>everything</b> you carried is lost, loadout pieces too; the stash is never touched. On the death screen you may <b>watch one ad to save ONE</b> lost piece back to your stash (Premium: free).</p>
+    <p><b>1.10.0 POISON:</b> Blight Adders (bite), Venom Spitters (violet globs) and Blightcaps stack <b>poison</b> on you: a violet tile with a number shows your stacks. It ticks, then wears off on its own (it never kills). Your <b>quick ability</b> (DASH / METEOR / ROLL / CHARGE) sheds 2 stacks. <b>Blightcaps burst when they die</b>: their violet ring shows the blast, so kill them at range or step out while the corpse swells. Shield Phalanxes block hits from the front (circle them); Rubble Hurlers lob rocks at a shadow on the ground. New gear: Moon Chakram, Blight Darts, 8 armour bases and 6 new affixes. Raid bosses 6-8: Vexmire, Kharos, Skarn.</p>
+    <p><b>1.9.6 HEX CLOUDS + BOLTS:</b> cursed ground is now a <b>cloud</b>: stay out of its bright edge. Some small clouds (an arrow next to their tag) drift slowly after you - just sidestep, they turn slowly. Hex Orbs and <b>Hex Casters</b> (a status glyph over their head) also fire slow <b>status bolts</b>: watch the coloured aim line, it blinks when the aim locks, then step sideways. A bolt hit = that status for 5 s. <b>NO REGEN</b> blocks every heal, life steal included.</p>
+    <p><b>1.9.4 HEXES:</b> from wave 4 a slow <b>Hex Orb</b> drifts in. When it stops and draws a ring, step out (or dash) before it pulses, or it curses you for 7 s. Cursed ground works the same way: a marked corner or ring warns for 2.5 s, then hexes you while you stand in it. Statuses (dark tiles next to your buffs): <b>SLOWED</b> move -35% · <b>NO REGEN</b> no healing at all · <b>WEAKENED</b> damage dealt -30% · <b>FRAGILE</b> damage taken +35%.</p>
+    <p><b>1.9.3 PRICES:</b> the first village buys are cheap again (Smithy 1,500, Hero Hall 2,000, Tavern L2 1,200, first MEND 1,000) and prices climb in steps: early buildings ~5-12k, mid tiers tens of thousands, the Portal and end prestige still cost hundreds of thousands to millions. Heroes cost 7,500 / 10,000 / 12,500 to recruit, and a portal drop costs about 1,000-2,000 gold.</p>
+    <p><b>1.9.2 SCREEN FIT:</b> menus and cards now fit (or scroll) on short phone screens, the run HUD and buttons stay clear of the camera cut-out, rounded corners and the gesture bar, and the pixels are scaled in whole device pixels so they stay sharp on every screen.</p>
+    <p><b>1.9.1 COMPACT HUD:</b> the run screen shows HP + lives, level, your weapon, gear pips (gold dot = ★ kept), WAVE, time / kills, the event line and danger lines. Buffs are small coloured tiles (gold frame = for the rest of the run, the bar under a tile is its time left). Gold, gear count, the next boss / gear check and buff names + times are on the <b>pause</b> card. Your held weapon now points where you aim, and dropped hearts are bigger with a pink glow (they pulse softly before they fade).</p>
+    <p><b>1.9 SETTINGS + PREMIUM:</b> <b>⚙</b> (hub) or <b>⚙ SETTINGS</b> (pause) holds sound ♪, music ♫, banners, PREMIUM and <b>RESET PROGRESS</b>. (1.11.1: no more ads between runs.) Ads are only ever optional: when you go down, <b>watch an ad to revive</b> (once per run), or tap the hub <b>♥</b> (Support the creator). <b>PREMIUM</b> is a one-time purchase; the revive then happens free. Nothing that gives power is for sale.</p>
+    <p><b>1.8 SOUND:</b> <b>♪</b> on the hub mutes everything (sound effects and music). <b>♫</b> (hub) or <b>MUSIC</b> (pause menu) turns only the music off. Each map has its own music (camp, Ashen Field, Bone Crypt, Frost Spire, raids) that keeps changing and picks up when the horde or a boss shows up. Loot sounds tell rarity apart: Rares chime, Uniques ring out. All sound is generated on the phone, no downloads.</p>
+    <p><b>1.7 EXTRACT OR LOSE IT:</b> gear only survives a run if you <b>extract</b>. An <b>EXIT GATE</b> rises every <b>10 waves</b> (10, 20, 30...) but it is <b>SEALED</b>: beat its trial first (kill monsters inside its red ring, stand on its 3 runes in order, slay the gate <b>KEEPER</b>, or on a Gear Check wave beat the Warden), then stand in it 5s. Extracting pays a bonus and opens the <b>KEEP</b> picker (tap an item for its full details). <b>(1.13.0: death loses everything you carry, loadout too; see LOADOUT + STASH above.)</b> A won raid also counts as an extraction. Barracks and catapults are now far <b>outposts that grow</b> if you ignore them (hut, war camp, citadel; catapult, siege squad, artillery mage), and an ignored battery's shells hit harder every second. Village costs went up x1000, XP is halved and there is <b>one skill-point pool</b> for the shared and hero trees. Some uniques now form <b>sets</b> (2-3 piece bonuses). The Cleaver hits a frontal <b>cone</b>. Raids hit much harder: dodge the telegraphs, and punish the boss while it is <b>OPEN</b> after each cast.</p>
+    <p>Gems are <b>character XP</b>. Level ups give <b>skill points</b> that you keep forever. Weapons are lost when the run ends.</p>
+    <p>Waves never stop. Every 5th wave brings a <b>boss event</b>. Between waves watch for a <b>regen well</b> (stand in it to heal and fill the meter) and the <b>gold goblin</b> (it runs away: catch it before it escapes off-screen). Win an event for a <b>60–90s power-up</b>: multi-shot, slow aura, lifesteal or freeze burst.</p>
+    <p><b>0.8 events</b> (follow the lettered edge arrows): <b>E</b> escort: guard the <b>mage</b> until her teleport finishes, or walk the <b>caravan</b> to camp (it only rolls while you stay close). Raiders wear a red mark. <b>B</b> barracks keep sending packs and a <b>C</b> catapult lobs shells at red circles until you smash them. <b>G</b> exit gate: stand in it 6s to escape with a gold + XP bonus and a rare gift. Dying still ends the run normally.</p>
+    <p><b>0.9 tester pack:</b> on waves <b>20, 40, 60</b> a <b>GEAR CHECK</b> warden replaces the Colossus: kill it before its <b>CULL</b> timer (40s) runs out or it enrages. Red ring = slam (step out), red line = dash (step sideways), red glow = bullet rings. Passing it drops 2 Rares and a <b>RUN</b> boon (a power-up that lasts the whole run; wave-10+ Colossus kills give one too). Loot keeps improving past wave 20 (<b>T4 Exalted</b>) and 40 (<b>T5 Mythic</b>). Barracks are armoured and catapults fire from much farther: smash them early. The exit gate shows its escape bonus above the arch. Build the <b>PORTAL CIRCLE</b> in the village to start a run at wave 21 / 31 / 41 (later tiers: 61 / 81 / 101, each needs that Gear Check passed): tap <b>⊙</b> next to START to pick the wave; each use costs gold.</p>
+    <p><b>1.0 Market:</b> from wave 6 a travelling <b>M</b> market stall sets up near you (every ~2.5 min, open 50s). <b>Walk into it</b>: time freezes while you <b>buy</b> 6 items rolled for this wave (Magic+, one Rare) or <b>sell</b> bag and worn items for gold (a sale pays ~42% of what the stall would ask). It spends your gold bank. Your weapon in hand and ★ kept Armory items can't be sold. <b>LEAVE</b> resumes the fight with a short grace; the stall packs up 12s later (walk back in to trade again). <b>RESET PROGRESS</b> (next to the version on the start screen) wipes the whole save after you type WIPE; <b>SKILLS → RESPEC</b> only refunds shared points.</p>
+    <p><b>1.1 content:</b> the <b>shared tree</b> has 15 nodes (Bloodlust, Last Gasp, Splinter, Catalyst, Momentum, Midas, Packrat are new) and every <b>hero tree</b> has 9 (a third row under each ability, plus a second passive node). New foes: the <b>Cinder Mason</b> raises stone <b>walls</b> across your path (dashed orange line first; walls only block you, last 5.5s, and <b>Dash / Roll / Charge</b> pass through), <b>Blast Ticks</b> arm and explode (red circle: back off or kill them first), <b>Corpse Bloats</b> burst into maggots, <b>Wraiths</b> mark a purple X next to you and blink there, <b>Rime Oracles</b> heal and shield their pack (kill them first). From wave 10 the Colossus, and later big elites and mini-bosses, drop <b>big red circles</b> on you: get out before they fill. New weapons: <b>Rift Spear</b> (line thrust), <b>Bolt Thrower</b> (3-bolt burst, boss killer), <b>Chain Flail</b> (360° spin). New affixes: Slayer's, Execution, Thunder, Fleet, Greed, Thorns. Orange <b class="c-unique">Uniques</b> are named pieces with a special effect (Wardens drop them most).</p>
+    <p><b>1.2 village:</b> your town now grows as you build. The <b>village score</b> upgrades the roads (dirt path, gravel, cobbles, dressed stone) and the homes (thatch shacks, tiled cottages, two-storey townhouses), brings in more trees, flowers, folk and animals, and a windmill once the town is big enough. Purely cosmetic: buildings work exactly as before.</p>
+    <p><b>Know your foes:</b> swarms come in packs; <b>tanks</b> are big and shrug off knockback; <b>chargers</b> stop, flash and draw a red dash line before they rush (step sideways); <b>casters</b> keep their distance and show an aim line before they fire; a <b>mini-boss</b> (orange ring) shows up on waves 3, 8, 13... and the Bone Colossus every 5th wave. Each map has its own cast and hazards: <b>Ashen Field</b> ember vents glow then erupt (they burn monsters too), <b>Bone Crypt</b> graves crack open and raise skeletons, <b>Frost Spire</b> ice sheets slow you down. Zones get meaner: Bone Crypt is <b>zone threat II</b> and Frost Spire <b>zone threat III</b> (monsters scale as if several waves deeper, hit harder and come thicker; more gold and XP). Ashen Field stays the base curve. Gear Checks past wave 60 (Void Warden IV, V...) dash twice.</p>
+    <p><b>Gold</b> (coins) is kept forever. Spend it in the <b>Village</b>: the tavern brews gold while you're away, the hearth buys extra lives and wave healing, the smithy picks your starting weapon. New buildings and tiers need <b>gold AND a milestone</b> (the card shows ✓/✗ for each): Hero Hall, Waygate (Bone Crypt, then <b>Frost Spire</b> at tier 2), Inn / Stone Hearth / Forge tiers that make the tavern, hearth and smithy stronger, and prestige decor that fills the town (walls, statue, garden, banners, lanterns, fountain, market, watchtower, trophy wall). <b>Drag</b> the village to look around; a <b>!</b> sign means you can build it now. The <b>ARMORY</b> (and then the <b>Artifact Museum</b>) grows your loadout slots (3 / 6 / 9) and your stash. Loadout pieces are equipped at the next run start; the smithy weapon fills the weapon slot if your loadout has none (or rides along as a spare).</p>
+    <p><b>1.4 raids:</b> after your first boss kill a <b>🏆 RAIDS</b> button appears next to VILLAGE. The <b>Raid Board</b> lists 5 staged bosses (Ashmaw, Morthal, Glacia, Vael, Morrghast), each with 3 phases; each needs the previous trophy <b>and</b> a progress milestone (the card shows ✓/✗). <b>CHALLENGE</b> drops you into a sealed arena with your Armory kit plus raid-issued Magic gear in empty slots. Read the floor: <b>orange / red circles = get out</b>, <b>green = stand in</b> before the countdown ends, <b>cyan rings = slip through the GAP</b>, <b>purple lines = step off</b>, an eye that follows you = <b>keep moving</b>, and some phases shield the boss until you kill the marked adds. The first kill mounts a trophy on the <b>Trophy Wall</b> and drops 2 Rares; then walk into the gold ring to return. Dying just ends the attempt.</p>
+    <p><b>BANNER</b> (hub, next to ♪, or the pause menu) sets the big announcements (WAVE, events, bosses, Market…): <b>NORMAL</b> large, <b>SMALL</b> smaller and see-through, <b>TOP</b> compact, or <b>OFF</b>. Since 1.11.2 every mode sits in the top band under the wave timer and the objective lines, never over your hero. The HUD lines under the timer and the edge arrows always stay.</p>
+    <p><button id="bTutReplay" class="pxbtn small">REPLAY TUTORIAL</button> <span class="tiny">shows the welcome cards again and coaches your next run</span></p>
+    <p class="tiny">Keyboard: WASD move · J/Space dash · K nova · I/Tab bag (E equip · X junk · T take) · Esc pause</p>
+  </div>
+</section>
+
+<section id="pickov" class="screen modal" hidden>
+  <div class="card center"><h2 id="pickHead">CHOOSE A REWARD</h2><div id="pickBody" class="pkrow"></div></div>
+</section>
+<section id="charov" class="screen modal" hidden>
+  <div class="card"><h2>CHARACTER</h2><div id="charBody"></div><button id="bCharX" class="pxbtn go wide">BACK</button></div>
+</section>
+<section id="pause" class="screen modal" hidden>
+  <div class="card center">
+    <h2>PAUSED</h2>
+    <div id="pauseInfo" class="tiny"></div>
+    <div id="pauseRun" class="tiny gold"></div>
+    <button id="bResume" class="pxbtn go wide">RESUME</button>
+    <button id="bGuideP" class="pxbtn wide">GUIDE</button>
+    <button id="bCharP" class="pxbtn wide">☰ CHARACTER STATS</button>
+    <button id="bBannerP" class="pxbtn wide">BANNER: NORMAL</button>
+    <button id="bMusP" class="pxbtn wide">MUSIC: ON</button>
+    <button id="bSetP" class="pxbtn wide">⚙ SETTINGS</button>
+    <button id="bFbP" class="pxbtn wide go">✉ SEND FEEDBACK</button>
+    <button id="bAbandon" class="pxbtn wide">ABANDON RUN (keep XP, LOSE ALL YOU CARRY)</button>
+  </div>
+</section>
+
+<section id="dead" class="screen modal" hidden>
+  <div class="card center deadcard">
+    <h2 id="deadTitle">YOU FELL</h2>
+    <div class="deadbody"><div id="deadStats"></div><div class="tiny deadtut" id="deadTut" hidden></div>
+    <div class="heirbox"><div class="tiny" id="keepTitle"><b class="c-rare">KEEP ONE HEIRLOOM</b> · it will be equipped when your next run starts</div>
+      <div id="heirAd" class="heirad" hidden><button id="bHeirAd" class="pxbtn go small">▶ WATCH AD · SAVE IT</button><button id="bHeirNo" class="pxbtn small">LET IT GO</button><span class="tiny" id="heirAdTxt">PREMIUM saves it free, no ad</span></div>
+      <div id="heirList"></div><div class="heirdet" id="heirDetail"></div><div class="tiny" id="heirNote"></div></div></div>
+    <button id="bHub" class="pxbtn go wide">BACK TO CAMP</button>
+  </div>
+</section>
+
+<div id="tut" class="tutov" hidden><div class="card center tutcard" role="dialog" aria-label="Tutorial">
+  <div class="tiny gold" id="tutStep">TUTORIAL</div><h2 id="tutH">WELCOME</h2><p id="tutB"></p>
+  <div class="row"><button id="tutBack" class="pxbtn small">◀ BACK</button><button id="tutNext" class="pxbtn go">NEXT ▶</button><button id="tutGo" class="pxbtn go" hidden>START GUIDED RUN</button><button id="tutDone" class="pxbtn go" hidden>GOT IT</button><button id="tutSkip" class="pxbtn small">SKIP TUTORIAL</button></div>
+</div></div>
+<div id="coach" hidden><span id="coachTxt"></span><button id="coachSkip" class="pxbtn mini">SKIP</button></div>
+<div id="adov" class="tutov adov" hidden><div class="card center adcard" role="dialog" aria-label="Offer">
+  <div class="tiny gold" id="adTag"></div><h2 id="adH"></h2><p id="adB"></p>
+  <div class="row"><button id="adYes" class="pxbtn go">OK</button><button id="adNo" class="pxbtn small">NO</button></div>
+</div></div>
+<div id="supov" class="tutov" hidden><div class="card center supcard" role="dialog" aria-label="Support the creator">
+  <div class="tiny gold">♥ PIXEL HORDE</div><h2>SUPPORT THE CREATOR</h2><p class="tiny" id="supB"></p>
+  <div class="suprow">
+    <div class="supopt"><b>▶ WATCH AN AD</b><span class="tiny" id="supAdTxt"></span><button id="supAd" class="pxbtn go">▶ WATCH AN AD</button></div>
+    <div class="supopt prem"><b class="gold">★ PREMIUM · ONE-TIME</b><span class="tiny" id="supPremTxt"></span><button id="supBuy" class="pxbtn go">★ BUY PREMIUM</button></div>
+  </div>
+  <div class="row"><button id="supClose" class="pxbtn small">MAYBE LATER</button></div>
+</div></div>
+<div id="fbov" class="tutov" hidden><div class="card center fbcard" role="dialog" aria-label="Send feedback">
+  <div class="tiny gold">FRIEND BETA</div><h2>SEND FEEDBACK</h2>
+  <p class="tiny">Screenshot of the current screen is attached when possible. Short note → opens your email app to <b>conradimatt@gmail.com</b> (one tap Send).</p>
+  <textarea id="fbTxt" rows="4" maxlength="800" placeholder="What broke / felt weird / you loved…" aria-label="Feedback note"></textarea>
+  <div class="tiny" id="fbStatus"></div>
+  <div class="row"><button id="fbSend" class="pxbtn go">SEND</button><button id="fbCancel" class="pxbtn small">CANCEL</button></div>
+</div></div>
+<section id="guide" class="screen modal" hidden aria-label="Game guide">
+  <div class="card guidecard" role="dialog" aria-modal="true" aria-labelledby="guideTitle">
+    <div class="sk-top"><h2 id="guideTitle">FIELD GUIDE</h2><button id="guideClose" class="pxbtn small" aria-label="Close guide">BACK</button></div>
+    <label class="tiny" for="guideSearch">Search all sections</label>
+    <input id="guideSearch" type="search" placeholder="Stats, abilities, poison…" autocomplete="off" maxlength="100">
+    <div id="guideTabs" class="row" aria-label="Guide sections"><button class="pxbtn small" data-section="Stats">STATS</button><button class="pxbtn small" data-section="Abilities">ABILITIES</button><button class="pxbtn small" data-section="Status effects">STATUS EFFECTS</button></div>
+    <div id="guideCount" class="tiny" role="status" aria-live="polite"></div>
+    <div id="guideBody" tabindex="0" aria-label="Guide entries"></div>
+  </div>
+</section>
+<div id="toast" hidden></div>
+<script src="js/game.js"></script>
+</body>
+</html>
