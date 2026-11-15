@@ -1,7 +1,26 @@
 'use strict';
 /* Pixel Horde 0.6.0 — loot filter, junk (no re-pickup), ground inspect, village Armory (multi-item keep-set). 0.5.0: enemy roles (swarm/tank/charger/ranged/mini-boss), per-map wave tables + light map hazards, on top of 0.4.0 heroes/gear/village. Vanilla JS + canvas, no deps. */
 (() => {
-const VERSION = '1.17.1';
+const VERSION = '1.18.1';
+/* ---------------- 1.18.0: momentum, fleeting gates, map signatures, artillery split, objective pings, useful village ---------------- */
+const ON18 = !window.__phLegacy && !window.__phNo118;   // the 1.17 smoke suites pin the old rules with __phNo118; the shipped game always runs 1.18
+const DRIFT18 = { a: { ash: 0, crypt: Math.PI / 2, frost: -Math.PI / 2 }, name: { ash: 'EAST', crypt: 'SOUTH', frost: 'NORTH' }, cone: Math.PI / 3, bias: 0.75 };
+const HEAT18 = { r: 140, grace: 18, rise: 1 / 45, decay: 1 / 10, spawnX: 1.5, packAt: 0.4, packEvery: 7, pack: w => 3 + Math.floor(w / 5), biteAt: 0.5,
+  name: { ash: 'CINDERS', crypt: 'GRAVE FOG', frost: 'WHITEOUT' }, col: { ash: '#ef7d57', crypt: '#a7f070', frost: '#f4f4f4' }, ashBurn: 0.015, fogRot: 0.01, frostSlow: 0.30 };
+const GATE18 = { reDelay: 40, reLife: 90, fade: 20 };
+const FIRE18 = { dens: 0.045, r: 15, tick: 0.4, pct: 0.035, flat: w => 1 + 0.2 * w, burnT: 2, burnPct: 0.015, mobX: 0.5 };
+const ICE18 = { cell: 48, dens: 0.10, hp: w => 60 + 10 * w };
+const CRYPT18 = { C: 224, road: 24 };
+const ART18 = { burnR: 0.75, burnT: 3, burnPer: 0.25, burnX: 0.30 };
+const WIZ18 = { from: 8, every: [22, 32], cap: w => w < 20 ? 1 : w < 35 ? 2 : 3, keep: 120, range: 230, cd: [4.5, 6.5], tele: 1.2, wallTele: 1.0, wallsFrom: 15,
+  cloud: { r: 34, life: 6 }, freeze: { r: 30, life: 5, x: 0.45 }, weak: { r: 26, dur: 6 }, fwall: { len: 90, life: 4, x: 0.45 }, lwall: { len: 110, x: 2.2 }, barFrom: 4, barEvery: 3 };
+const MKT18 = [1, 1.15, 1.30];                 // market stalls tier 0..2: sell multiplier
+const SMITH18 = [0, 0.05, 0.10, 0.15];         // smithy discount: none / smithy / forge II / forge III
+const FLASK18 = { n: [0, 1, 1, 2], heal: [0, 0.30, 0.50, 0.50], at: 0.30 };
+const SCOUT18 = { lead: [0, 15, 25, 35], gate: [0, 20, 35, 50] };
+const PRICE181 = { apoth: { 2: 200000 }, watch: { 2: 240000 } };   // 1.18.1 hand-set top tiers (were 360,000 / 440,000 from the econ bands): reachable mid-game
+function smithT18() { const h = save && save.home; return !h || !h.smithy ? 0 : 1 + Math.min(2, h.forge | 0); }
+function disc18(c) { return ON18 && save && save.home ? Math.round(c * (1 - SMITH18[smithT18()])) : c; }
 /* 1.17.1: Matt phone-test pack. Fantasy satchel bag icon; capped/non-stacking screen shake + Settings toggle (default on);
    bag action row fits every viewport with a header CLOSE; same CLOSE/BACK on stash + Armory; stash uses in-run line-by-line compare;
    stash tile taps use a slop-tolerant pointer pick (scroll was cancelling clicks); To Loadout uses existing Armory slots;
@@ -222,6 +241,8 @@ function mk(rows, map) {
   rows.forEach((r, y) => [...r].forEach((ch, X) => { if (ch === '.') return; if (XPAL[ch]) { x.fillStyle = XPAL[ch]; x.fillRect(X, y, 1, 1); return; } let i = parseInt(ch, 16); if (map) i = map(i); x.fillStyle = PAL[i]; x.fillRect(X, y, 1, 1); }));
   return c;
 }
+SPR.wizard = [[ '.....0.....','....090..b.','....0990bcb','...09949.b.','..0000000g.','...0c4c0.g.','...0ddd0.g.','..089998cg.','..0899980g.','..0894980g.','.08999998g.','.08999998g.','.088888880g','..00..00.g.' ],
+  [ '.....0.....','....090..c.','....0990cbc','...09949.c.','..0000000g.','...0c4c0.g.','...0ddd0.g.','..089998cg.','..0899980g.','..0894980g.','.08999998g.','.08999998g.','.088888880g','...00.00.g.' ]];   // 1.18.0 robed wizard: pointed hat, beard, staff
 const IMG = {};
 for (const k in SPR) { IMG[k] = { n: SPR[k].map(f => mk(f)) }; for (const v in REMAP) IMG[k][v] = SPR[k].map(f => mk(f, REMAP[v])); }
 for (const h in HERO_REMAP) { const m = HERO_REMAP[h]; IMG['hero_' + h] = { n: SPR.hero.map(f => mk(f, m)), w: SPR.hero.map(f => mk(f, REMAP.w)) }; }
@@ -508,7 +529,7 @@ const MSN = { from: 3, first: 50, every: [55, 80], life: 40, r: 11, hpX: [1.3, 1
    + its gold (flat, not econ-banded: tier 1 is ~1000g on purpose) + resources from tier 5 (wave 41) up. */
 const PORTAL_T = [[1000, 5], [6000, 11], [25000, 21], [60000, 31], [110000, 41, { stone: 40 }], [180000, 51, { stone: 60, oil: 10 }], [270000, 61, { oil: 25, jewels: 4 }], [380000, 71, { stone: 80, jewels: 8 }], [520000, 81, { jewels: 12, people: 2 }], [700000, 91, { jewels: 16, people: 4 }], [950000, 101, { jewels: 24, people: 6 }]];
 const portalLv = (c, W, res) => ({ base: c, cost: c, W, res: res || null, need: `Reach wave ${W}`, ok: s => (s.best && s.best.wave || 0) >= W, prog: s => `best wave ${Math.min((s.best && s.best.wave) || 0, W)}/${W}` });
-const gl = (cost, need, ok, prog) => ({ base: cost, get cost() { return econCost(this.base); }, need, ok, prog });
+const gl = (cost, need, ok, prog) => ({ base: cost, get cost() { return disc18(this.fix || econCost(this.base)); }, need, ok, prog });   // 1.18.1: .fix = hand-set price
 const nfmt = n => n.toLocaleString('en-US');
 const atL = (v, n) => `${nfmt(Math.min(v, n))}/${nfmt(n)}`;
 const PORTAL_W = [0, 5, 11, 21, 31, 41, 51, 61, 71, 81, 91, 101];   // 1.14.0 (Matt): 11 deploy bands, cheap first tier (wave 5). Was [0, 21, 31, 41, 61, 81, 101]
@@ -654,6 +675,16 @@ const VILLAGE = {
   watch:  { name: 'WATCHTOWER', ico: 'watch', deco: true, d: 'Prestige: a lookout tower with a beacon fire and a guard.', levels: [gl(220, 'Survive 5:00 in one run', s => s.best.time >= 300, s => `${fmtT(Math.min(s.best.time, 300))}/5:00`)] },
   trophy: { name: 'TROPHY WALL', ico: 'trophy', deco: true, d: 'Prestige: Colossus skulls mounted on a board, one per 5 bosses slain (up to 6), and a plinth row for every raid boss: each first raid kill mounts its head.', levels: [gl(350, 'Defeat 15 bosses or any raid boss', s => s.bossKills >= 15 || raidTotal(s) >= 1, s => raidTotal(s) ? `raid trophy ${raidTotal(s)}/${RAIDS.length}` : `${atL(s.bossKills, 15)} bosses`)] },
 };
+if (ON18) {   // 1.18.0 useful village
+  Object.assign(VILLAGE.market, { deco: false, bonus: true, d: 'Market stalls: traders in town raise what the travelling Market pays when you sell.', fx: l => `Market sell price x${MKT18[l].toFixed(2)}` });
+  Object.assign(VILLAGE.watch, { deco: false, bonus: true, name: 'SCOUT TOWER', names: ['WATCHTOWER', 'SCOUT TOWER', 'EAGLE SPIRE'], d: 'Scouts ride out ahead: exit gates (and the travelling Market) are foretold before they rise, and gate timers run longer.', fx: l => l ? `gates + Market foretold ${SCOUT18.lead[l]}s early · gate timer +${SCOUT18.gate[l]}s` : 'no scouting' });
+  VILLAGE.watch.levels.push(gl(450, 'Reach wave 15', s => s.best.wave >= 15, s => `wave ${Math.min(s.best.wave, 15)}/15`), gl(1100, 'Reach wave 25 + defeat 12 bosses', s => s.best.wave >= 25 && s.bossKills >= 12, s => `wave ${Math.min(s.best.wave, 25)}/25 · ${atL(s.bossKills, 12)} bosses`));
+  { const fx0 = VILLAGE.forge.fx; VILLAGE.forge.fx = l => `${fx0(l)} · upgrades -${Math.round(SMITH18[1 + l] * 100)}%`; VILLAGE.forge.bonus = true; }
+  VILLAGE.apoth = { name: 'APOTHECARY', names: ['APOTHECARY', 'ALCHEMIST', 'GRAND ALCHEMIST'], ico: 'heart', bonus: true, d: 'Brews healing flasks from the herb garden. You start each wave run with them; one is drunk automatically when you drop below 30% HP (not while NO REGEN is on).',
+    fx: l => l ? `${FLASK18.n[l]} starting flask${FLASK18.n[l] > 1 ? 's' : ''} · each heals ${Math.round(FLASK18.heal[l] * 100)}% max HP` : 'no starting flask',
+    levels: [gl(150, 'Herb Garden + play 10 runs', s => (s.home.garden || 0) >= 1 && s.runs >= 10, s => `${(s.home.garden || 0) >= 1 ? 'garden ✓' : 'garden ✗'} · ${atL(s.runs, 10)} runs`), gl(400, 'Defeat 6 bosses', s => s.bossKills >= 6, s => `${atL(s.bossKills, 6)} bosses`), gl(900, 'Reach wave 20', s => s.best.wave >= 20, s => `wave ${Math.min(s.best.wave, 20)}/20`)] };
+}
+if (ON18) for (const k in PRICE181) for (const i in PRICE181[k]) VILLAGE[k].levels[i].fix = PRICE181[k][i];   // 1.18.1
 const VKEYS = Object.keys(VILLAGE);
 const UNLOCKS = [ // milestone notices at run end (the gold half is paid in the village)
   { id: 'map2', kind: 'MAP', name: 'Bone Crypt', need: 'Waygate: ' + VILLAGE.gate.levels[0].need, ok: VILLAGE.gate.levels[0].ok, where: 'build the Waygate' },
@@ -696,9 +727,9 @@ const armBase = w => (w && ARMB[w.base] && ARMB[w.base].slot === w.slot) ? ARMB[
 if (!window.__phLegacy) { const add = { helmet: ['sturdy', 'warded'], amulet: ['antid', 'cruel'], chest: ['sturdy', 'warded', 'antid'], gloves: ['cruel', 'venom', 'warded'], ring: ['cruel', 'venom'], belt: ['sturdy', 'antid'], pants: ['sturdy', 'warded'], boots: ['antid'] }; for (const k in add) ARMOR[k].pool.push(...add[k]); }
 /* 0.2.0 homestead + power-ups */
 const HOME = {
-  tavern: { max: 5, cost: l => econCost([0, 60, 150, 300, 600][l]), rate: l => Math.round(l * INN_MULT[save.home.inn || 0]), cap: l => Math.round(90 * l * INN_MULT[save.home.inn || 0]) },   // gold per minute, storage cap (0.4.0: x inn tier)
-  life:   { max: 2, cost: l => econCost([120, 300][l]) },        // hearth: extra lives per run
-  mend:   { max: 3, cost: l => econCost([50, 110, 200][l]) },    // hearth: heal % max HP at each new wave
+  tavern: { max: 5, cost: l => disc18(econCost([0, 60, 150, 300, 600][l])), rate: l => Math.round(l * INN_MULT[save.home.inn || 0]), cap: l => Math.round(90 * l * INN_MULT[save.home.inn || 0]) },   // gold per minute, storage cap (0.4.0: x inn tier)
+  life:   { max: 2, cost: l => disc18(econCost([120, 300][l])) },        // hearth: extra lives per run
+  mend:   { max: 3, cost: l => disc18(econCost([50, 110, 200][l])) },    // hearth: heal % max HP at each new wave
   smithy: { get cost() { return econCost(75); } },
 };
 const BUFFS = {
@@ -716,7 +747,7 @@ const need = l => Math.round(40 + 30 * (l - 1) + 6 * (l - 1) ** 2);
 /* ---------------- save ---------------- */
 const SKEY = 'pixelhorde.save.v1';
 const defHome = () => ({ tavern: 1, life: 0, mend: 0, smithy: 0, start: 'wand', tavT: Date.now(), ...Object.fromEntries(VKEYS.map(k => [k, 0])) });
-const SAVE_V = 20;   // 1.17.1: + shake (bool; default true) + item.locked (persists into stash/loadout; uniques default locked).   // 1.16.3: fixed-size bag/stash detail panes (Junk never moves).   // 1.16.2: Settings-only LOOT filter; bag/pause cycle removed (no schema change).   // 1.16.1: same schema (hub beta banner + privacy URL; no new keys).   // 1.16.0: + verboseHud (bool; default false = CLEAN combat HUD).   // 1.15.0: + lootHideC / lootHideM / lootConv.   // 1.14.0: + res + kits
+const SAVE_V = 21;   // 1.18.0: + vibrate (bool; default true) + home.apoth (0..3) + home.watch may reach 3.   // 1.17.1: + shake (bool; default true) + item.locked (persists into stash/loadout; uniques default locked).   // 1.16.3: fixed-size bag/stash detail panes (Junk never moves).   // 1.16.2: Settings-only LOOT filter; bag/pause cycle removed (no schema change).   // 1.16.1: same schema (hub beta banner + privacy URL; no new keys).   // 1.16.0: + verboseHud (bool; default false = CLEAN combat HUD).   // 1.15.0: + lootHideC / lootHideM / lootConv.   // 1.14.0: + res + kits
 const BANNER_MODES = ['normal', 'small', 'top', 'off'];   // 1.3.0: hub / pause cycle order
 const BANNER_LBL = { normal: 'NORMAL', small: 'SMALL', top: 'TOP', off: 'OFF' };
 const defRes = () => ({ wood: 0, stone: 0, oil: 0, jewels: 0, people: 0 });   // 1.14.0
@@ -740,7 +771,7 @@ const TUT_PAGES = [
   LOAD.on ? ['BAG, STASH + LOADOUT', 'Walk over loot to bag it; tap <b>BAG</b> to compare and equip. Between runs, pick your <b>LOADOUT</b> from the <b>STASH</b>: those pieces are equipped at START, but they are <b>lost if you die</b> with them. The <b>Armory</b> adds loadout slots and stash space.'] : ['BAG + KEEP', 'Walk over loot to bag it; tap <b>BAG</b> to compare and equip. When a run ends you <b>KEEP</b> items (one heirloom, more with the Armory). Kept ★ heirlooms are equipped at your next start.'],
   ['YOUR VILLAGE', 'Spend gold in the <b>VILLAGE</b>: the tavern brews gold, the hearth gives lives, the smithy picks your weapon, the Armory adds loadout slots + stash, the Waygate opens new maps. Cards show gold + milestone ✓/✗.']];
 const defTut = (done = false) => ({ done, intro: done, ran: done, seen: {} });   // 1.7.1 onboarding: intro cards seen, guided run finished, in-run tips seen, done
-const defSave = () => ({ v: SAVE_V, level: 1, xp: 0, sp: 0, skills: {}, best: { wave: 0, time: 0, kills: 0 }, totalKills: 0, bossKills: 0, runs: 0, unlocked: {}, sound: true, banner: 'normal', gold: 0, goldTotal: 0, home: defHome(), armory: [], stash: [], lootMin: 1, lootHideC: true, lootHideM: false, lootConv: true, verboseHud: false, shake: true, events: 0, hero: 'wanderer', heroes: { wanderer: true }, map: 'ash', slain: {}, miniKills: 0, hx: Object.fromEntries(HERO_IDS.map(h => [h, defHx()])), portal: defPortal(), gc: [0, 0, 0, 0, 0], raids: {}, tut: defTut(), music: true, premium: false, uniq: [], cheers: 0, res: defRes(), kits: {} });   // 1.11.1: - adRuns, + uniq + cheers   // 1.9.0: + premium (one-off IAP flag) + adRuns (finished runs since the last interstitial)   // 1.8.0: + music (♫ toggle; ♪ = sound stays the master mute)
+const defSave = () => ({ v: SAVE_V, level: 1, xp: 0, sp: 0, skills: {}, best: { wave: 0, time: 0, kills: 0 }, totalKills: 0, bossKills: 0, runs: 0, unlocked: {}, sound: true, banner: 'normal', gold: 0, goldTotal: 0, home: defHome(), armory: [], stash: [], lootMin: 1, lootHideC: true, lootHideM: false, lootConv: true, verboseHud: false, shake: true, vibrate: true, events: 0, hero: 'wanderer', heroes: { wanderer: true }, map: 'ash', slain: {}, miniKills: 0, hx: Object.fromEntries(HERO_IDS.map(h => [h, defHx()])), portal: defPortal(), gc: [0, 0, 0, 0, 0], raids: {}, tut: defTut(), music: true, premium: false, uniq: [], cheers: 0, res: defRes(), kits: {} });   // 1.11.1: - adRuns, + uniq + cheers   // 1.9.0: + premium (one-off IAP flag) + adRuns (finished runs since the last interstitial)   // 1.8.0: + music (♫ toggle; ♪ = sound stays the master mute)
 let save = defSave();
 const validItem = w => !!w && (w.slot || 'weapon') === 'weapon' ? !!(w && BASES[w.base]) : !!(w && ARMOR[w.slot] && (w.base === w.slot || !!armBase(w)));
 // schema v1 (0.1.x) -> v2 (0.2.0) -> v3 (0.3.0) -> v4 (0.4.0) -> v5 (0.5.0: bestiary kill counts + mini-boss kills): same key, new fields get defaults; XP/skills/bests/gold/homestead untouched
@@ -761,7 +792,7 @@ const validItem = w => !!w && (w.slot || 'weapon') === 'weapon' ? !!(w && BASES[
 // v16 (1.13.0, extract redesign): no new keys. Insurance is gone: `armory` = the LOADOUT 1:1 (cleanW strips any heir / aix / insured flags; caps grew 2/4/6 -> 3/6/9 so nothing is cut). Stash + Uniques kept 1:1. Old v15 saves keep every piece
 // v15 (1.11.1, monetization remount): + `uniq` (endless Premium Uniques tab; Unique-rarity items only, no cap), + `cheers` (support ads watched, int >= 0), - `adRuns`. A Premium save sweeps its stash Uniques into the tab; stash cap = Premium cap for Premium saves
 function migrate(s) {
-  const d = defSave(); if (!s || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20].includes(s.v)) return d;
+  const d = defSave(); if (!s || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21].includes(s.v)) return d;
   const o = Object.assign(d, s, { best: Object.assign(d.best, s.best), home: Object.assign(defHome(), s.home || {}), heroes: Object.assign({ wanderer: true }, s.heroes || {}) });
   if (!Number.isFinite(o.gold) || o.gold < 0) o.gold = 0; if (!BASES[o.home.start]) o.home.start = 'wand';
   const keep = (Array.isArray(s.armory) ? s.armory.slice() : []); if (s.heirloom && s.v < 6) keep.unshift(s.heirloom); delete o.heirloom;   // 0.6.0: old heirloom = first kept item
@@ -783,6 +814,7 @@ function migrate(s) {
   o.lootConv = s.lootConv !== false;   // 1.15.0 default ON
   o.lootMin = o.lootHideC && o.lootHideM ? 2 : o.lootHideC ? 1 : 0;   // keep bag/pause cycle in sync
   o.verboseHud = s.verboseHud === true;   // 1.16.0 default CLEAN (false)
+  o.vibrate = s.vibrate !== false;   // 1.18.0 default ON (v21)
   o.shake = s.shake !== false;   // 1.17.1 default ON
   const hx0 = s.hx && typeof s.hx === 'object' ? s.hx : {}; o.hx = {};   // 0.7.0
   for (const h of HERO_IDS) { const r = hx0[h] || {}, q = defHx(); q.lv = Math.max(1, Math.floor(+r.lv || 1)); q.xp = Math.max(0, Math.floor(+r.xp || 0)); q.sp = Math.max(0, Math.floor(+r.sp || 0)); q.tot = Math.max(0, Math.floor(+r.tot || 0));
@@ -1053,6 +1085,7 @@ const SFXR = {
   boss:  { cd: 0.35, cap: 1, pri: 1, duck: [0.35, 1.4], d: 1.3, p: (G, D, t) => { tone(G, D, t, { w: 'sine', f: 62, f1: 38, d: 1.2, v: 0.34, a: 0.01 }); tone(G, D, t, { w: 'sawtooth', f: 110, f1: 55, d: 0.9, v: 0.09, lp: 500, a: 0.02 }); tone(G, D, t + 0.02, { w: 'sawtooth', f: 116.5, f1: 58, d: 0.9, v: 0.07, lp: 500, a: 0.02 }); nz(G, D, t, { ft: 'lowpass', f: 600, f1: 120, d: 0.9, v: 0.16 }); } },
   revive: { cd: 0.3, cap: 1, pri: 1, duck: [0.45, 0.9], d: 0.9, p: (G, D, t) => { tone(G, D, t, { w: 'sine', f: 220, f1: 880, d: 0.6, v: 0.12, a: 0.03 }); arp(G, D, t + 0.25, [81, 85, 88, 93], { w: 'sine', d: 0.4, v: 0.06, st: 0.06, sp: 1 }); } },
   extract: { cd: 0.5, cap: 1, pri: 1, duck: [0.3, 1.8], d: 1.6, p: (G, D, t) => { arp(G, D, t, [60, 64, 67, 72, 76], { w: 'triangle', d: 0.5, v: 0.09, st: 0.09, lp: 3500, sp: 1 }); [60, 67, 72, 76].forEach(m => tone(G, D, t + 0.45, { w: 'sine', f: MIDI(m), d: 1.1, v: 0.05, a: 0.05 })); nz(G, D, t + 0.4, { ft: 'highpass', f: 6000, d: 0.8, v: 0.025, a: 0.2, sp: 1 }); } },
+  ping: { cd: 0.4, cap: 1, pri: 1, d: 0.45, p: (G, D, t) => { arp(G, D, t, [84, 91], { w: 'sine', d: 0.3, v: 0.07, st: 0.08, sp: 1 }); } },   // 1.18.0 objective ping
   death: { cd: 0.5, cap: 1, pri: 1, duck: [0.05, 2.6], d: 2, p: (G, D, t) => { arp(G, D, t, [67, 63, 60, 55], { w: 'triangle', d: 0.55, v: 0.1, st: 0.22, lp: 1600 }); tone(G, D, t + 0.66, { w: 'sine', f: MIDI(36), d: 1.3, v: 0.22, a: 0.02 }); nz(G, D, t, { ft: 'lowpass', f: 700, f1: 100, d: 0.8, v: 0.14 }); } },
 };
 const SFX_KINDS = Object.keys(SFXR);
@@ -1328,6 +1361,7 @@ function newRun(opt = {}) {
     R.banner = { s: `RAID: ${RD.name} ${RD.title}`, t: 2.6, c: RD.col }; R.bq.push({ s: `${RD.arena} - ${RD.phases.length} PHASES`, t: 1.6, c: '#94b0c2' });
     const nq = SLOTS.filter(k => kit.gear[k] && kit.gear[k].rk).length; if (nq) R.bq.push({ s: `QUARTERMASTER: ${nq} RAID-ISSUED ITEMS`, t: 1.6, c: '#ffcd75' }); { const M = R.raid.rm; if (M.tier) R.bq.push({ s: `REMATCH T${M.tier}: BOSS HP ${rmPct(M.hp)} · HITS ${rmPct(M.dmg)} · LOOT UP`, t: 2, c: '#ffcd75' }); } return; }
   kitsDeploy();   // 1.14.0 crafted field kits (wave runs only)
+  if (ON18) init18();   // 1.18.0 heat / solids / flasks
   const st = TABLES[map].start; for (let i = 0; i < 10; i++) { const a = i / 10 * TAU + rnd(-0.2, 0.2); spawnEnemy(st[i % st.length], Math.cos(a) * rnd(110, 150), Math.sin(a) * rnd(80, 110)); }   // 0.5.0: each map opens with its own swarm
   for (const [t, from] of TABLES[map].cast) if (from <= R.wave) R.met[t] = 1;
   if (W) { for (let i = 0; i < PORTAL9.cacheN; i++) { const a = i / PORTAL9.cacheN * TAU - 1.2; dropWeapon(Math.cos(a) * 22, Math.sin(a) * 14, rollItem(Math.max(1, W - PORTAL9.cacheLag), { slot: pick(ARMOR_SLOTS), min: 1 }), true); }   // portal cache: a little behind the fair curve
@@ -1338,6 +1372,7 @@ function newRun(opt = {}) {
 }
 function hpMult(w) { return 1 + 0.22 * (w - 1) + 0.02 * (w - 1) ** 2; }
 function spawnEnemy(type, x, y, o = {}) {
+  if (ON18 && R && !R.raid && ETYPES[type] && ETYPES[type].role !== 'struct') [x, y] = free18(x, y, ETYPES[type].r + 1);   // 1.18.0 never inside a wall / ice
   const T = ETYPES[type], w = R.wave, mw = w + (R.M.lvl || 0), mini = T.role === 'mini', hm = hpMult(mw) * (o.boss ? 40 : o.elite ? 5 : 1) * R.M.hp;   // 1.5.0: zone threat scales from mw (waves deeper)
   const e = { id: ++R.eid, type, x, y, hp: T.hp * hm, maxHp: T.hp * hm, spd: T.spd * (o.elite ? 1.1 : 1) * (1 + 0.012 * Math.min(w, 30)) * (R.M.spd || 1), dmg: T.dmg * (1 + 0.08 * (mw - 1)) * (R.M.dmg || 1) * (o.boss ? 1.8 : o.elite ? 1.5 : 1),
     xp: T.xp * (o.boss ? 60 : o.elite ? 6 : 1) * R.M.loot, r: T.r * (o.boss ? 2.6 : o.elite ? 1.5 : 1), sc: o.boss ? 2.6 : mini ? T.sc : o.elite ? 1.5 : type === 'goblin' ? 1.3 : 1, elite: !!o.elite, boss: !!o.boss, mini,
@@ -1969,8 +2004,8 @@ function startEvent(k) {
   k = k || (R.wave >= EV8.escFrom && R.escSince >= EV8.escGap && canMajor('escort') ? 'escort' : R.evLast === 'well' ? 'goblin' : R.evLast === 'goblin' ? 'well' : pick(['well', 'goblin']));
   if (k === 'escort' || k === 'mage' || k === 'caravan') return startEscort(k === 'escort' ? null : k);   // 0.8.0: escort shares the well/goblin slot
   R.evLast = k; R.escSince++; sfx('event');
-  if (k === 'well') { const [x, y] = ringPos(110); R.ev = { k, x, y, r: 30, t: 25, prog: 0, need: 6 }; R.banner = { s: 'A REGEN WELL BUBBLES UP', t: 2.2, c: '#a7f070' }; }
-  else { const [x, y] = ringPos(80); const g = spawnEnemy('goblin', x, y); R.ev = { k, e: g }; R.banner = { s: 'GOLD GOBLIN! CATCH IT', t: 2.2, c: '#ffcd75' }; }
+  if (k === 'well') { const [x, y] = objRing18(110); R.ev = { k, x, y, r: 30, t: 25, prog: 0, need: 6 }; R.banner = { s: 'A REGEN WELL BUBBLES UP', t: 2.2, c: '#a7f070' }; }
+  else { const [x, y] = objRing18(80); const g = spawnEnemy('goblin', x, y); R.ev = { k, e: g }; R.banner = { s: 'GOLD GOBLIN! CATCH IT', t: 2.2, c: '#ffcd75' }; }
   return R.ev;
 }
 function updateEvents(dt) {
@@ -2051,12 +2086,14 @@ function drawOutpost(e, ex, ey, now, F, wind) {   // 1.16.0: family-matched art 
       fr(-4, -38, 8, 9, '#0b0b14'); fr(-3, -37, 6, 8, wind ? PAL[3] : '#29366f'); }
     if (t >= 7) { fr(-24, -34, 8, 30, '#0b0b14'); fr(-23, -33, 6, 29, F('#333c57')); fr(16, -34, 8, 30, '#0b0b14'); fr(17, -33, 6, 29, F('#333c57')); fr(10, -62, 1, 14, WOOD2); fr(11, -62, 9, 5, PAL[2]); }
     if (t >= 8) { fr(-8, -70, 16, 8, '#0b0b14'); fr(-7, -69, 14, 6, F('#94b0c2')); fr(-2, -78, 4, 8, F(PAL[2])); }
+    if (ON18 && t >= WIZ18.barFrom) { const gl = Math.floor(now / 160) % 2; fr(27, -32, 10, 30, '#0b0b14'); fr(28, -31, 8, 29, F('#29366f')); fr(26, -36, 12, 5, '#0b0b14'); fr(27, -35, 10, 3, F('#5d275d')); fr(29, -40, 6, 4, F('#5d275d')); fr(31, -44, 2, 4, F('#5d275d')); fr(31, -46, 2, 2, gl ? PAL[11] : PAL[4]); fr(30, -24, 4, 4, gl ? PAL[11] : '#3b5dc9'); }   // 1.18.0 wizard tower
   } else {
     const fam = outFam(e);
     if (outShielded(e)) { ctx.strokeStyle = PAL[10]; ctx.globalAlpha = 0.5 + 0.3 * Math.sin(now / 120); ctx.lineWidth = 1; ctx.beginPath(); ctx.ellipse(ex, ey - 12, 24, 20, 0, 0, TAU); ctx.stroke(); ctx.globalAlpha = 1; text(ctx, 'SHIELDED', ex, ey + 8, PAL[10], 1, 'c'); }
     if (fam === 'cannon') {   // iron tube on a carriage (replaces the wooden arm look via overlay)
       fr(-14, -18, 28, 8, '#0b0b14'); fr(-13, -17, 26, 6, F('#333c57')); fr(-18, -14, 12, 5, F('#566c86')); fr(4, -15, 16, 4, F('#94b0c2')); fr(18, -16, 6, 6, F('#566c86'));
       if (t >= 6) { fr(-6, -24, 4, 8, F('#333c57')); fr(2, -24, 4, 8, F('#333c57')); }
+      if (ON18 && t >= 7) { fr(-12, -30, 24, 10, '#0b0b14'); fr(-11, -29, 22, 8, F('#333c57')); fr(-9, -33, 18, 4, F('#566c86')); fr(-6, -35, 12, 2, F('#94b0c2')); fr(-4, -34, 8, 1, '#0b0b14'); if (t >= 8) { fr(-22, -12, 10, 6, '#0b0b14'); fr(-21, -11, 8, 4, F('#566c86')); fr(14, -12, 10, 6, '#0b0b14'); fr(15, -11, 8, 4, F('#566c86')); fr(-17, -4, 34, 3, F(WOOD2)); } }   // 1.18.0 bombard / grand battery
     } else if (fam === 'mage') {   // free-standing mage / archmage (NOT on a catapult)
       const hv = Math.round(Math.sin(now / 250));
       fr(-10, -8, 20, 6, '#0b0b14'); fr(-9, -7, 18, 4, F('#5d275d'));   // rune circle
@@ -2073,7 +2110,7 @@ function drawOutpost(e, ex, ey, now, F, wind) {   // 1.16.0: family-matched art 
 const instCount = k => R.E.reduce((n, e) => n + (e.inst && e.hp > 0 && (!k || e.inst === k) ? 1 : 0), 0);
 function majorsActive() { return (R.ev && R.ev.k === 'escort' ? 1 : 0) + (R.gate ? 1 : 0) + instCount(); }
 const canMajor = kind => R.majCd <= 0 && (kind === 'gate' || majorsActive() < EV8.majMax);
-function farPos(a, b) { const ang = Math.random() * TAU, d = rnd(a, b); return [R.p.x + Math.cos(ang) * d, R.p.y + Math.sin(ang) * d * 0.8]; }
+function farPos(a, b) { if (ON18 && R && !R.raid) return farPos18(a, b); const ang = Math.random() * TAU, d = rnd(a, b); return [R.p.x + Math.cos(ang) * d, R.p.y + Math.sin(ang) * d * 0.8]; }
 function spawnInst(k) {
   const [x, y] = farPos(OUT7.far[k][0], OUT7.far[k][1]), e = spawnEnemy(k, x, y); e.inst = k; e.kbr = 0; e.hp = e.maxHp = ETYPES[k].hp * instHp(R.wave) * R.M.hp; e.it = k === 'barracks' ? 4 : 3; e.wind = 0; e.packs = 0; e.ot = 1; e.age = 0; e.gT = 0;   // 1.16.0 far outpost, tier 1
   for (let t = 2; t <= outMaxTier(R.wave); t++) outGrow(e, true);   // late waves: already at the wave-unlocked tier
@@ -2103,7 +2140,7 @@ function updateInst(dt) {
     e.it -= dt; e.wind = e.it < (e.inst === 'barracks' ? 1.2 : 0.8) ? 1 : 0; if (e.it > 0) continue;
     if (e.inst === 'barracks') { const ot = outTier(e); e.it = Math.min(w >= 12 ? INST9.barEveryLate : INST9.barEvery, OUT7.barEvery[ot - 1]);
       if (R.E.length < Math.min(260, 40 + 12 * w) + 30) { e.packs++; const n = Math.round(Math.min(INST9.packMax, 2 + Math.floor(w / 4) + Math.floor((e.packs - 1) / INST9.packGrow)) * OUT7.packX[ot - 1]); for (let i = 0; i < n; i++) { const m = spawnEnemy(pickType(), e.x + rnd(-10, 10), e.y + 8 + rnd(-3, 6)); m.fromB = e.id; }
-        if ((w >= INST9.eliteFrom || ot >= 2) && e.packs % OUT7.eliteEvery[ot - 1] === 0) { const m = spawnEnemy(pickType(true), e.x, e.y + 10, { elite: true }); m.fromB = e.id; }   // 0.9.0 escalation
+        if ((w >= INST9.eliteFrom || ot >= 2) && e.packs % OUT7.eliteEvery[ot - 1] === 0) { const m = spawnEnemy(pickType(true), e.x, e.y + 10, { elite: true }); m.fromB = e.id; } if (ON18) barWiz18(e, ot);   // 0.9.0 escalation
         burst(e.x, e.y - 2, PAL[2], 14, 40); if (onScreen(e, -40)) sfx('wind'); } }
     else { const ot = outTier(e), fam = outFam(e); e.it = Math.min(w >= 12 ? INST9.catEveryLate : INST9.catEvery, OUT7.catEvery[ot - 1]); const mv = input.mx || input.my, close = Math.hypot(p.x - e.x, p.y - e.y) < INST9.deadZone;
       const sh = close ? [0, 1].map(() => { const a = Math.random() * TAU, d = rnd(90, 140); return [e.x + Math.cos(a) * d, e.y + Math.sin(a) * d * 0.7]; }) : [[p.x, p.y]];
@@ -2122,6 +2159,7 @@ function updateInst(dt) {
       if (s.gfx & 4) R.groundFx.push({ k: 'noregen', x: s.x, y: s.y, r: s.r * 0.85, t: life, m: life });
       if (s.gfx & 8) R.groundFx.push({ k: 'weak', x: s.x, y: s.y, r: s.r * 0.85, t: life, m: life });
     }
+    if (ON18) burnGround18(s);   // 1.18.0 artillery leaves burning ground
     if (Math.abs(s.x - p.x) < VW / 2 + 30 && Math.abs(s.y - p.y) < VH / 2 + 30) { addShake(4); sfx('nova'); }
     if (Math.hypot((p.x - s.x) / s.r, (p.y - s.y) / (s.r * 0.7)) < 1 && p.inv <= 0 && !p.dash) hurt(s.dmg);
     for (const e of R.E) if (!e.inst && e.hp > 0 && Math.hypot(e.x - s.x, e.y - s.y) < s.r + e.r) hit(e, R.S.baseDmg, { proc: false, noCrit: true, col: PAL[3] }); }
@@ -2145,14 +2183,14 @@ const TRIAL_TXT = { quota: 'KILL INSIDE THE RED RING', runes: 'STAND ON THE RUNE
 const isGateWave = w => w > 0 && w % GATE7.every === 0;
 const nextGateWave = w => Math.floor(w / GATE7.every) * GATE7.every + GATE7.every;
 function openGate(trial) {
-  if (!R || R.over || R.raid) return null; const w = R.wave, [x, y] = farPos(GATE7.far[0], GATE7.far[1]);
+  if (!R || R.over || R.raid) return null; const w = R.wave, [x, y] = ON18 && R.gateFore ? [R.gateFore.x, R.gateFore.y] : farPos(GATE7.far[0], GATE7.far[1]);
   trial = trial || (R.gc && R.gc.e && R.gc.e.hp > 0 ? 'warden' : GATE7.trials[Math.floor(w / GATE7.every) % GATE7.trials.length]);
   const g = R.gate = { x, y, r: GATE7.r, open: GATE7.life, prog: 0, need: GATE7.need, surged: false, inside: false, sealed: true, trial, w, cnt: 0, quota: GATE7.quota(w), ri: 0, rp: 0, runes: [], keeper: null };
   if (trial === 'runes') { const a0 = Math.random() * TAU; for (let i = 0; i < GATE7.runeN; i++) { const a = a0 + i / GATE7.runeN * TAU; g.runes.push({ x: x + Math.cos(a) * GATE7.runeD, y: y + Math.sin(a) * GATE7.runeD * 0.7, done: false }); } }
   if (trial === 'keeper') { const k = spawnEnemy(pickType(true), x, y + 16, { elite: true }); k.hp = k.maxHp = k.maxHp * GATE7.keeperHp; k.keeper = true; k.kbr = 0; k.r *= 1.2; k.sc = Math.max(k.sc, 1.8); g.keeper = k; }
   R.gatesSeen = (R.gatesSeen || 0) + 1; R.majCd = Math.max(R.majCd, EV8.majGap); sfx('event');
   const b = escapeBonus(), gb = { s: 'AN EXIT GATE RISES - SEALED', t: 2.6, c: PAL[11] }; if (trial === 'warden') R.bq.push(gb); else R.banner = gb;   // the Gear Check keeps its own banner
-  R.bq.push({ s: `TO UNSEAL IT: ${TRIAL_TXT[trial]}`, t: 2.4, c: '#ffcd75' }, { s: `ESCAPE PAYS +${b.g}G +${b.x}XP +${b.gift} GIFT + KEEP GEAR`, t: 2.4, c: '#94b0c2' }); return g;
+  R.bq.push({ s: `TO UNSEAL IT: ${TRIAL_TXT[trial]}`, t: 2.4, c: '#ffcd75' }, { s: `ESCAPE PAYS +${b.g}G +${b.x}XP +${b.gift} GIFT + KEEP GEAR`, t: 2.4, c: '#94b0c2' }); return ON18 && !R.reOpen18 ? gate18Init(g) : g;
 }
 function gateUnseal(why) {
   const g = R.gate; if (!g || !g.sealed) return false; g.sealed = false; g.open = Math.max(g.open, GATE7.openMin); g.keeper = null; R.gateOpened = (R.gateOpened || 0) + 1;
@@ -2168,7 +2206,7 @@ function updateGate(dt) {
   const g = R.gate; if (!g) return; const p = R.p;
   g.inside = Math.hypot((p.x - g.x) / g.r, (p.y - g.y) / (g.r * 0.7)) < 1;
   if (Math.random() < (g.sealed ? 0.15 : 0.4)) R.PT.push({ x: g.x + rnd(-9, 9), y: g.y - rnd(4, 24), vx: 0, vy: -12, t: 0.5, m: 0.5, c: g.sealed ? PAL[2] : Math.random() < 0.5 ? PAL[11] : PAL[12], s: 1 });
-  g.open -= dt;
+  g.open -= dt; if (ON18 && !g.sealed && g.inside && g.open < 1) g.open = 1;   // 1.18.0 standing in an open gate holds it
   if (g.sealed) {
     if (g.trial === 'runes') { const ru = g.runes[g.ri]; if (ru && Math.hypot((p.x - ru.x) / GATE7.runeR, (p.y - ru.y) / (GATE7.runeR * 0.7)) < 1) { g.rp += dt;
         if (g.rp >= GATE7.runeStay) { ru.done = true; g.ri++; g.rp = 0; burst(ru.x, ru.y, PAL[11], 24, 60); sfx('zap');
@@ -2183,7 +2221,7 @@ function updateGate(dt) {
       for (let i = 0; i < n; i++) { const a = i / n * TAU; spawnEnemy(type, p.x + Math.cos(a) * d, p.y + Math.sin(a) * d); } R.banner = { s: "THEY WON'T LET YOU LEAVE!", t: 1.8, c: PAL[2] }; sfx('wind'); }
     if (g.prog >= g.need) escapeGate(); }
   else g.prog = Math.max(0, g.prog - dt * 0.5);
-  if (R.gate === g && g.open <= 0) { if (g.keeper && g.keeper.hp > 0) g.keeper.keeper = false; R.gate = null; R.banner = { s: `THE EXIT GATE COLLAPSES - NEXT: WAVE ${nextGateWave(R.wave)}`, t: 2.2, c: '#94b0c2' }; }
+  if (R.gate === g && g.open <= 0) { if (g.keeper && g.keeper.hp > 0) g.keeper.keeper = false; R.gate = null; if (ON18) gateMissed18(g); R.banner = { s: `THE EXIT GATE COLLAPSES - NEXT: WAVE ${nextGateWave(R.wave)}`, t: 2.2, c: '#94b0c2' }; }
 }
 function gateLine(g) { const b = escapeBonus(), bs = `+${b.g}G +${b.x}XP`; if (!g.sealed) return g.inside ? `EXTRACTING ${g.prog.toFixed(1)}/${g.need}S - ${bs}` : `EXIT GATE OPEN ${Math.ceil(g.open)}S - STAND IN IT = EXTRACT`;
   const t = g.trial === 'quota' ? `KILL IN THE RING ${g.cnt}/${g.quota}` : g.trial === 'runes' ? `RUNE ${Math.min(g.ri + 1, g.runes.length)}/${g.runes.length}: STAND ON IT ${g.rp.toFixed(1)}/${GATE7.runeStay}S` : g.trial === 'keeper' ? 'SLAY THE KEEPER' : 'BEAT THE GEAR CHECK';
@@ -2218,10 +2256,10 @@ function startEscort(v, T0, pend) {
   v = v || (R.escVar === 'mage' ? 'caravan' : 'mage'); R.escVar = v; R.escN++; R.escSince = 0; R.majCd = EV8.majGap; sfx('event');
   const hm = 1 + 0.1 * (R.wave - 1), say = (a, b) => { R.banner = { s: a, t: 2.4, c: PAL[10] }; R.bq.push({ s: b, t: 2, c: '#94b0c2' }, { s: 'RAIDERS ARE MARKED RED', t: 1.6, c: PAL[2] }); };
   const hx = 1;   // 1.14.1: tier rolled up front (shown on the banner + HUD): harder = bigger / eliter pulses (+ T-2 elites from T3), bigger reward pick; escort HP unchanged
-  if (v === 'mage') { const C = EV8.mage, [x, y] = ringPos(70); R.ev = { k: 'escort', v, x, y, r: 6, hp: C.hp * hm * hx, maxHp: C.hp * hm * hx, prog: 0, need: C.need, pi: 0, t: 0, hurtT: 0, ward: false, nT: C.frost, tier: T };
+  if (v === 'mage') { const C = EV8.mage, [x, y] = objRing18(70); R.ev = { k: 'escort', v, x, y, r: 6, hp: C.hp * hm * hx, maxHp: C.hp * hm * hx, prog: 0, need: C.need, pi: 0, t: 0, hurtT: 0, ward: false, nT: C.frost, tier: T };
     say(pre ? 'MAGE ESCORT: REACH HER TO PICK A REWARD' : `ESCORT T${T}: PROTECT THE MAGE`, pre ? 'YOUR PICK SETS THE DIFFICULTY · FAIL = NOTHING' : 'STAY IN HER RING'); }
-  else { const C = EV8.caravan, [x, y] = ringPos(60), a = Math.random() * TAU;
-    R.ev = { k: 'escort', v, x, y, r: 9, sx: x, sy: y, tx: x + Math.cos(a) * C.dist, ty: y + Math.sin(a) * C.dist, hp: C.hp * hm * hx, maxHp: C.hp * hm * hx, t: 0, pT: 2, pn: 0, moving: false, wheel: 0, hurtT: 0, ward: false, tier: T };
+  else { const C = EV8.caravan, [x, y] = objRing18(60), a = Math.random() * TAU;
+    R.ev = { k: 'escort', v, x, y, r: 9, sx: x, sy: y, tx: x + Math.cos(a) * C.dist, ty: y + Math.sin(a) * C.dist, hp: C.hp * hm * hx, maxHp: C.hp * hm * hx, t: 0, pT: 2, pn: 0, moving: false, wheel: 0, hurtT: 0, ward: false, tier: T }; road18(R.ev);
     say(pre ? 'CARAVAN: REACH IT TO PICK A REWARD' : `ESCORT T${T}: GUARD THE CARAVAN`, pre ? 'YOUR PICK SETS THE DIFFICULTY · FAIL = NOTHING' : 'IT ONLY ROLLS WHILE YOU STAY CLOSE'); }
   if (pre) { R.ev.pend = RPS.wait; R.ev.tier = 0; }
   return R.ev;
@@ -2365,14 +2403,14 @@ const MK = { first: 165, portalFirst: 60, every: 150, retry: 8, life: 50, afterL
   TV: [16, 36, 70, 140, 260], RV: [1, 2, 4, 6], afxV: 0.1, buy: 1.3, sell: 0.55, grace: 0.75, graceCd: 6 };
 const mkValue = w => Math.round(MK.TV[clamp(w.tier | 0, 0, 4)] * MK.RV[clamp(w.rarity | 0, 0, 3)] * (1 + MK.afxV * (w.affixes ? w.affixes.length : 0)));
 const mkBuyPrice = w => Math.max(5, Math.round(mkValue(w) * MK.buy / 5) * 5);
-const mkSellPrice = w => Math.max(1, Math.round(mkValue(w) * MK.sell));
+const mkSellPrice = w => Math.max(1, Math.round(mkValue(w) * MK.sell * mkt18()));   // 1.18.0 market stalls
 function mkRollStock(wave) {   // 6 items rolled for this wave: 1 weapon, 1 featured Rare (any slot), 4 armour pieces in different slots; all Magic+
   const out = [rollWeapon(wave, { min: 1 }), rollItem(wave, { min: 2 })], sl = ARMOR_SLOTS.slice().sort(() => Math.random() - 0.5);
   for (let i = 0; out.length < MK.stock; i++) out.push(rollArmor(wave, sl[i % sl.length], { min: 1 }));
   return out.map(w => ({ w, price: mkBuyPrice(w) }));
 }
 function openMarket() {
-  if (!R || R.over || R.mk) return null; const [x, y] = farPos(MK.near[0], MK.near[1]);
+  if (!R || R.over || R.mk) return null; const [x, y] = ON18 && R.mkFore ? [R.mkFore.x, R.mkFore.y] : farPos(MK.near[0], MK.near[1]); if (ON18) R.mkFore = null;
   R.mk = { x, y, r: MK.r, t: MK.life, stock: mkRollStock(R.wave), inside: false, visits: 0, left: false, wave: R.wave }; R.mkN++; R.majCd = Math.max(R.majCd, EV8.majGap); sfx('event');
   R.banner = { s: 'A TRAVELLING MARKET SETS UP', t: 2.4, c: '#ffcd75' }; R.bq.push({ s: 'WALK INTO THE M STALL TO BUY / SELL', t: 2.2, c: '#94b0c2' }, { s: 'TIME FREEZES WHILE YOU TRADE', t: 1.8, c: '#94b0c2' }); return R.mk;
 }
@@ -2772,7 +2810,7 @@ function gainXP(v) {   // 1.7.0: every XP gain x ECON.xp (fractions carry within
 }
 function attack() {
   const p = R.p, S = R.S, w = R.weapon, B = BASES[w.base];
-  const t = R.E.find(e => e.inst && e.hp > 0 && Math.hypot(e.x - p.x, e.y - p.y) < 50 + e.r) || (R.ev && R.ev.k === 'escort' && nearestRaider(p.x, p.y, S.range)) || (R.raid && nearestMarked(p.x, p.y, S.range * (MELEE[w.base] ? 1.15 : 1))) || nearest(p.x, p.y, S.range * (MELEE[w.base] ? 1.15 : 1)); if (!t) return false;   // 0.8.0: standing at an installation, you hit it
+  const t = R.E.find(e => e.inst && e.hp > 0 && Math.hypot(e.x - p.x, e.y - p.y) < 50 + e.r) || (R.ev && R.ev.k === 'escort' && nearestRaider(p.x, p.y, S.range)) || (R.raid && nearestMarked(p.x, p.y, S.range * (MELEE[w.base] ? 1.15 : 1))) || nearest(p.x, p.y, S.range * (MELEE[w.base] ? 1.15 : 1)); if (!t) return ON18 ? iceAuto18() : false;   // 0.8.0: standing at an installation, you hit it
   const a = Math.atan2(t.y - p.y, t.x - p.x); p.aimA = a; p.face = Math.cos(a) < 0 ? -1 : 1;
   if (S.storm3 && (R.stormN = (R.stormN || 0) + 1) % S.storm3 === 0) { R.FX.push({ k: 'zap', x1: t.x, y1: t.y - 60, x2: t.x, y2: t.y, t: 0.15 }); burst(t.x, t.y, PAL[11], 10, 40); hit(t, S.baseDmg * 2.5, { proc: false, col: PAL[11] }); chain(t, S.baseDmg); R.stormHits = (R.stormHits || 0) + 1; }   // 1.7.0 Stormcaller 3pc
   if (w.base === 'wand') {
@@ -2866,6 +2904,7 @@ function updateKit(dt) {
 }
 function novaBlast(rm = 1, dm = 1) {
   const p = R.p; const S = R.S; const rad = 64 * S.novaR * rm;
+  if (ON18) iceArea18(p.x, p.y, rad, S.baseDmg * 3 * dm);   // 1.18.0 Nova cracks ice
   R.FX.push({ k: 'ring', x: p.x, y: p.y, r: rad, t: 0.4, m: 0.4, c: PAL[11] }); addShake(6); R.flash = 0.12; R.hitstop = 0.05; sfx('nova');
   for (let i = 0; i < 40; i++) { const a = i / 40 * TAU; R.PT.push({ x: p.x, y: p.y, vx: Math.cos(a) * rad * 2.2, vy: Math.sin(a) * rad * 2.2, t: 0.4, m: 0.4, c: i % 2 ? PAL[11] : PAL[12], s: 2 }); }
   for (const e of R.E) { const dx = e.x - p.x, dy = e.y - p.y, d = Math.hypot(dx, dy); if (d > rad + e.r) continue; e.frozen = e.boss ? S.freeze / 2 : S.freeze; hit(e, S.baseDmg * 3 * dm, { kx: dx / (d || 1), ky: dy / (d || 1), kb: 70, col: PAL[11] }); }
@@ -2928,9 +2967,9 @@ function update(dt) {
     if (w >= 6) { const [x, y] = ringPos(spawnDist()); spawnEnemy(pickType(true), x, y, { elite: true }); }
     if (w >= 13) { const [x, y] = ringPos(spawnDist()); spawnEnemy(pickType(true), x, y, { elite: true }); }
     if (!MINI_WAVE(w)) R.banner = R.banner || { s: 'THE HORDE SURGES', t: 1.5, c: '#ef7d57' }; }
-  const dn = R.M.dens || 1, rate = Math.min(14, 1.6 + 0.55 * w) * (R.gc ? 0.35 : 1) * dn, cap = Math.round(Math.min(260, 40 + 12 * w) * dn);   // 0.9.0: trash thins out during a Gear Check. 1.5.0: x zone horde (dens)
+  const dn = R.M.dens || 1, rate = Math.min(14, 1.6 + 0.55 * w) * (R.gc ? 0.35 : 1) * dn * (ON18 ? heatX18() : 1), cap = Math.round(Math.min(260, 40 + 12 * w) * dn);   // 0.9.0: trash thins out during a Gear Check. 1.5.0: x zone horde (dens)
   if (!R.raid) R.spawnAcc += dt * rate; while (R.spawnAcc >= 1) { R.spawnAcc--; if (R.E.length < cap) { const [x, y] = ringPos(spawnDist()); R.spawnAcc -= spawnPack(pickType(), x, y) - 1; } }
-  if (R.raid) updateRaid(dt); else { updateHazards(dt); updateEvents(dt); msStep(dt); feStep(dt); updateDirector(dt); } updateBuffs(dt); updateHex(dt); update110(dt); updateKit(dt); updateWarden(dt); updateWalls(dt); updateNukes(dt);   // 1.1.0 walls + nukes
+  if (R.raid) updateRaid(dt); else { updateHazards(dt); updateEvents(dt); msStep(dt); feStep(dt); updateDirector(dt); if (ON18) update18(dt); } updateBuffs(dt); updateHex(dt); update110(dt); updateKit(dt); updateWarden(dt); updateWalls(dt); updateNukes(dt);   // 1.1.0 walls + nukes
   // player
   let mx = input.mx, my = input.my; const kx = (input.keys.d || input.keys.arrowright ? 1 : 0) - (input.keys.a || input.keys.arrowleft ? 1 : 0), ky = (input.keys.s || input.keys.arrowdown ? 1 : 0) - (input.keys.w || input.keys.arrowup ? 1 : 0);
   if (kx || ky) { const l = Math.hypot(kx, ky); mx = kx / l; my = ky / l; input.mx = mx; input.my = my; } else if (!input.stick) { input.mx = input.my = 0; mx = my = 0; }
@@ -2945,7 +2984,8 @@ function update(dt) {
     if (D.t <= 0) { p.dash = null;
       if (D.k !== 'roll') { const qk = D.k === 'charge' ? hrank('k_quake') : 0, rime = D.k === 'dash' && hrank('w_rime'), rr = D.k === 'charge' ? 32 * (1 + 0.3 * qk) : 26 * (1 + 0.15 * hrank('w_stride')), mul = D.k === 'charge' ? 1.2 : 1; R.FX.push({ k: 'ring', x: p.x, y: p.y, r: rr, t: 0.25, m: 0.25, c: PAL[12] }); addShake(3);
         for (const e of R.E) { const dx = e.x - p.x, dy = e.y - p.y, d = Math.hypot(dx, dy); if (d < rr + e.r) { if (rime) e.frozen = Math.max(e.frozen, e.boss ? 0.3 : 0.8); if (qk) e.chill = Math.max(e.chill, 2); hit(e, S.baseDmg * S.dashX * mul, { kx: dx / (d || 1), ky: dy / (d || 1), kb: 80 }); } } } }
-  } else { const sp = 55 * S.move * (S.gasp && p.hp < S.maxHp * 0.35 ? 1 + S.gasp : 1) * Math.min(p.slowT > 0 ? 0.65 : 1, R.onIce ? 0.62 : 1) * hexSlowMul() * (p.artSlow > 0 ? 0.55 : 1); p.x += mx * sp * dt; p.y += my * sp * dt; if (mx || my) { p.anim += dt * 8; if (Math.abs(mx) > 0.2) p.face = mx < 0 ? -1 : 1; } }   // 1.1.0 Last Gasp · 1.16.0 artSlow
+  } else { const sp = 55 * S.move * (S.gasp && p.hp < S.maxHp * 0.35 ? 1 + S.gasp : 1) * Math.min(p.slowT > 0 ? 0.65 : 1, R.onIce ? 0.62 : 1) * hexSlowMul() * (p.artSlow > 0 ? 0.55 : 1) * (ON18 ? move18() : 1); p.x += mx * sp * dt; p.y += my * sp * dt; if (mx || my) { p.anim += dt * 8; if (Math.abs(mx) > 0.2) p.face = mx < 0 ? -1 : 1; } }   // 1.1.0 Last Gasp · 1.16.0 artSlow
+  if (ON18) { const n18 = pushOut18(p, 4); if (n18 && p.dash && n18.s.k === 'ice' && !p.dash.ice18) { p.dash.ice18 = 1; iceHit18(n18.s, S.baseDmg * 2.5 * S.dashX); } }   // 1.18.0 crypt walls + ice blocks
   if (!p.dash && !S.uq.regret) pushOutWalls(p, 4);   // 1.1.0 walls block you (dash / roll / charge phase through; Mason's Regret walks through)
   p.stillT = (mx || my || p.dash) ? 0 : p.stillT + dt;
   p.atkCd -= dt; if (p.atkCd <= 0) { if (attack()) p.atkCd = 1 / (S.rate * (p.quick > 0 ? 1.6 : 1) * (p.mom > 0 ? 1 + S.mom : 1) * (S.tail && (mx || my) ? 1.15 : 1)); else p.atkCd = 0.05; }   // 1.1.0 Momentum / Tailwind
@@ -2960,7 +3000,7 @@ function update(dt) {
     if (e.inst) continue;   // 0.8.0 installations: logic in updateInst
     let dx = p.x - e.x, dy = p.y - e.y, d = Math.hypot(dx, dy) || 1; const pd = d;
     if (e.gob) { const off = Math.abs(e.x - p.x) > VW / 2 + 8 || Math.abs(e.y - p.y) > VH / 2 + 8; if (off) e.gobT -= dt; if (e.gobT <= 0 || d > far * 1.5) { e.hp = 0; e.escaped = true; continue; } }
-    else if (d > far && !e.boss && !e.mini && !e.fromB && !e.guard && !R.raid && !(e.raid && e.raid === R.ev)) { const [x, y] = ringPos(spawnDist()); e.x = x; e.y = y; continue; }   // 0.8.0 raiders; 1.16.0 barracks packs / catapult guards stay at the outpost
+    else if (d > far && !e.boss && !e.mini && !e.fromB && !e.guard && !R.raid && !(e.raid && e.raid === R.ev)) { const [x, y] = ON18 ? free18(...ringPos(spawnDist()), e.r + 1) : ringPos(spawnDist()); e.x = x; e.y = y; continue; }   // 0.8.0 raiders; 1.16.0 barracks packs / catapult guards stay at the outpost
     const RV = e.raid && e.raid === R.ev ? e.raid : (e.raid = null);   // 0.8.0 escort raiders head for the escort, not you
     if (RV) { dx = RV.x - e.x; dy = RV.y - e.y; d = Math.hypot(dx, dy) || 1; }
     e.x += e.kx * dt; e.y += e.ky * dt; e.kx *= Math.pow(0.0005, dt); e.ky *= Math.pow(0.0005, dt);
@@ -3025,6 +3065,7 @@ function update(dt) {
     const gx = Math.floor(e.x / cell), gy = Math.floor(e.y / cell);
     for (let ox = -1; ox <= 1; ox++) for (let oy = -1; oy <= 1; oy++) { const a = grid.get(((gx + ox) * 73856093) ^ ((gy + oy) * 19349663)); if (!a) continue;
       for (const o of a) { if (o === e) continue; const sx = e.x - o.x, sy = e.y - o.y, sd = sx * sx + sy * sy, rr = e.r + o.r; if (sd < rr * rr && sd > 0.0001) { const q = Math.sqrt(sd), push = (rr - q) * 0.5 * (e.heavy ? 0 : o.boss || o.mini || o.inst || o.heavy ? 2 : e.boss || e.mini ? 0.1 : 1); e.x += sx / q * push; e.y += sy / q * push; } } }
+    if (ON18) enemyWall18(e, dt, sp);   // 1.18.0 walls / ice block monsters too
     // contact damage
     if (RV && d < e.r + RV.r + 3 && e.hitCd <= 0) { e.hitCd = 0.8; escortHurt(RV, e.dmg * (e.st === 2 ? 1.2 : 1)); }
     if (!e.gob && !e.hexo && pd < e.r + 4 && e.hitCd <= 0 && p.inv <= 0) { e.hitCd = 0.7; hurt(e.dmg * (e.st === 2 ? 1.2 : e.role === 'ranged' || e.role === 'builder' || e.role === 'support' ? 0.6 : 1)); { const pz = ETYPES[e.type].poison; if (pz && !e.boss && e.role !== 'ranged') addPoison(pz, e.dmg, 'bite'); }   /* 1.10.0 */ const ch = ETYPES[e.type].chillHit; if (ch && !e.boss) p.slowT = Math.max(p.slowT, ch);
@@ -3037,6 +3078,7 @@ function update(dt) {
     if (b.k === 'bolt' && b.tgt && b.tgt.hp > 0) { const a = Math.atan2(b.tgt.y - b.y, b.tgt.x - b.x), sp = Math.hypot(b.vx, b.vy); const ca = Math.atan2(b.vy, b.vx); let da = Math.atan2(Math.sin(a - ca), Math.cos(a - ca)); const na = ca + clamp(da, -6 * dt, 6 * dt); b.vx = Math.cos(na) * sp; b.vy = Math.sin(na) * sp; }
     if (b.k === 'chak') chakStep(b, dt);   // 1.10.0 returning chakram
     b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
+    if (ON18 && b.life > 0 && proj18(b, true)) { if (b.k === 'chak') { if (!b.ret) { b.ret = true; b.hit = new Set(); } b.x -= b.vx * dt; b.y -= b.vy * dt; } else b.life = 0; }   // 1.18.0 solids stop shots
     if (b.k === 'bolt' && Math.random() < 0.6) R.PT.push({ x: b.x, y: b.y, vx: rnd(-8, 8), vy: rnd(-8, 8), t: 0.2, m: 0.2, c: Math.random() < 0.5 ? PAL[3] : PAL[4], s: 1 });
     for (const e of R.E) {
       if (e.hp <= 0 || b.hit.has(e.id) || b.life <= 0) continue; if ((e.x - b.x) ** 2 + (e.y - 4 * e.sc - b.y) ** 2 > (e.r + b.r + 2) ** 2) continue;
@@ -3051,7 +3093,7 @@ function update(dt) {
   }
   R.P = R.P.filter(b => b.life > 0);
   trailStep(dt);   // 1.13.2 slow-orb trails
-  for (const b of R.EP) { b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt; if (p.inv <= 0 && Math.hypot(b.x - p.x, b.y - (p.y - 4)) < (b.k === 'hex' ? HEX.bolt.hit : b.r + 4)) { b.life = 0; if (R.S.uq.mirror && Math.random() < 0.25) { mirrorShot(b); continue; } if (b.k === 'hex') hexBoltHit(b); hurt(b.dmg * (1 - (R.S.warded || 0))); if (b.k === 'venom') addPoison(1, b.dmg / 0.8, R.raid ? 'raid' : 'spit');   /* 1.10.0 Warded + venom globs */ if (b.k === 'ice') p.slowT = Math.max(p.slowT, 1.5); } }   // 1.9.6 status bolts
+  for (const b of R.EP) { b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt; if (ON18 && b.life > 0 && proj18(b, false)) b.life = 0; if ((!ON18 || b.life > 0) && p.inv <= 0 && Math.hypot(b.x - p.x, b.y - (p.y - 4)) < (b.k === 'hex' ? HEX.bolt.hit : b.r + 4)) { b.life = 0; if (R.S.uq.mirror && Math.random() < 0.25) { mirrorShot(b); continue; } if (b.k === 'hex') hexBoltHit(b); hurt(b.dmg * (1 - (R.S.warded || 0))); if (b.k === 'venom') addPoison(1, b.dmg / 0.8, R.raid ? 'raid' : 'spit');   /* 1.10.0 Warded + venom globs */ if (b.k === 'ice') p.slowT = Math.max(p.slowT, 1.5); } }   // 1.9.6 status bolts
   R.EP = R.EP.filter(b => b.life > 0);
   // pickups
   for (const g of R.G) { const dx = p.x - g.x, dy = p.y - 3 - g.y, d = Math.hypot(dx, dy); if (d < S.pickup) g.mag = true; if (g.mag) { const sp = 160; g.x += dx / d * sp * dt; g.y += dy / d * sp * dt; if (d < 5) { g.v = -g.v; gainXP(-g.v); R.gemN = (R.gemN || 0) + 1; if (S.gemCd) p.cd1 = Math.max(0, p.cd1 - S.gemCd); if (S.siphon && canHeal()) p.hp = Math.min(S.maxHp, p.hp + S.siphon); sfx('gem'); } } }   // 1.1.0 Siphon
@@ -3127,6 +3169,7 @@ function render(now) {
       ctx.globalAlpha = 0.8; ctx.fillStyle = PAL[12]; ctx.fillRect(hx - 6, hy - 2, 5, 1); ctx.fillRect(hx + 3, hy + 2, 4, 1); if (Math.floor(now / 300 + gx * 7 + gy) % 6 === 0) ctx.fillRect(hx + Math.round((hash(gx, gy) - 0.5) * H.r), hy - 1, 1, 1); ctx.globalAlpha = 1; }
     else drawVent(H, hx, hy, ventPhase(H), now, gx, gy);   // 1.6.0 pixel vent: stone lip, glowing cracks, dithered heat, flame tongues (same 3s / 1s / 1s cycle)
   }
+  if (ON18) draw18Terrain(X, Y, now, cx, cy);   // 1.18.0 roads / walls / ice / fire pits
   drawHexZones(X, Y, now);   // 1.9.4
   drawGround110(X, Y, now);   // 1.10.0 blightcap radius / swell / spores, hurler shadows
   for (const q of R.rise) { const k = 1 - q.t / q.m, rx = X(q.x), ry2 = Y(q.y); ctx.fillStyle = '#2a1e1e'; ctx.fillRect(rx - 6, ry2 - 2, 12, 4); ctx.fillStyle = PAL[13]; ctx.fillRect(rx - 3, ry2 - 7, 6, 5); ctx.fillStyle = PAL[15]; ctx.fillRect(rx - 2, ry2 - 6, 1, 1);
@@ -3152,7 +3195,7 @@ function render(now) {
     ctx.fillStyle = '#0b0b14'; ctx.fillRect(wx - 9, wy - 6, 18, 10); ctx.fillStyle = PAL[14]; ctx.fillRect(wx - 8, wy - 5, 16, 8); ctx.fillStyle = PAL[13]; ctx.fillRect(wx - 8, wy - 5, 16, 2);
     ctx.fillStyle = PAL[9]; ctx.fillRect(wx - 6, wy - 3, 12, 3); ctx.fillStyle = PAL[11]; ctx.fillRect(wx - 5 + Math.floor(now / 200) % 8, wy - 3, 2, 1);
     const k = ev.prog / ev.need; ctx.fillStyle = '#0b0b14'; ctx.fillRect(wx - 11, wy - 12, 22, 3); ctx.fillStyle = PAL[5]; ctx.fillRect(wx - 10, wy - 11, Math.ceil(20 * k), 1); }
-  drawGround8(X, Y, now);   // 0.8.0 gate / escort ring + route / raider cracks / catapult impact zones
+  drawGround8(X, Y, now); if (ON18) draw18Ground(X, Y, now);   // 0.8.0 gate / escort ring + route / raider cracks / catapult impact zones
   for (const c of R.C) { if (c.r) { drawResChip(X(c.x), Y(c.y), c.r, now); continue; } ctx.drawImage(IMG.coin.n[0], X(c.x) - 2, Y(c.y) - 3 + (Math.floor(now / 150 + c.x) % 4 === 0 ? -1 : 0)); }
   // items
   for (const it of R.I) {
@@ -3237,6 +3280,7 @@ function render(now) {
     else if (f.k === 'zap') { ctx.strokeStyle = PAL[11]; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(X(f.x1), Y(f.y1) - 4); for (let i = 1; i < 4; i++) { const t = i / 4; ctx.lineTo(X(f.x1 + (f.x2 - f.x1) * t) + rnd(-3, 3), Y(f.y1 + (f.y2 - f.y1) * t) - 4 + rnd(-3, 3)); } ctx.lineTo(X(f.x2), Y(f.y2) - 4); ctx.stroke(); }
   }
   for (const q of R.PT) { ctx.globalAlpha = Math.min(1, q.t / q.m * 1.5); ctx.fillStyle = q.c; ctx.fillRect(X(q.x), Y(q.y), q.s, q.s); } ctx.globalAlpha = 1;
+  if (ON18) draw18Top(X, Y, now);   // 1.18.0 beacons + linger heat
   for (const t of R.TX) { ctx.globalAlpha = Math.min(1, t.t * 3); text(ctx, t.s, X(t.x), Y(t.y), t.c, t.big ? 2 : 1, 'c'); } ctx.globalAlpha = 1;
   if (fz) { ctx.fillStyle = '#f4f4f4'; for (let i = 0; i < 46; i++) { const sp = 8 + hash(i, 5) * 14, fx = ((hash(i, 3) * 997 + now / 1000 * sp * 0.6 - cx * 0.3) % VW + VW) % VW, fy = ((hash(i, 4) * 991 + now / 1000 * sp - cy * 0.3) % VH + VH) % VH;
     ctx.globalAlpha = 0.35 + 0.4 * hash(i, 6); ctx.fillRect(Math.round(fx + Math.sin(now / 700 + i) * 2), Math.round(fy), hash(i, 8) < 0.2 ? 2 : 1, 1); } ctx.globalAlpha = 1; }   // 0.4.0 Frost Spire snowfall
@@ -3477,9 +3521,11 @@ function edgeArrow(tx, ty, c, now, lbl) {
   if (Math.abs(dx) < FVW / 2 - 10 && Math.abs(dy) < FVH / 2 - 10 && ox + dx > 10 && ox + dx < VW - 10 && oy + dy > 10 && oy + dy < VH - 10) return;
   const a = Math.atan2(dy, dx), m = 14, ca = Math.cos(a), sn = Math.sin(a), kx = ca > 1e-6 ? (VW - m - ox) / ca : ca < -1e-6 ? (m - ox) / ca : Infinity, ky = sn > 1e-6 ? (VH - m - oy) / sn : sn < -1e-6 ? (m - oy) / sn : Infinity, k = Math.max(0, Math.min(kx, ky));
   const ax = ox + ca * k, ay0 = oy + sn * k, ay = !lbl ? ay0 : Math.abs(ax - VW / 2) < 135 ? Math.max(80, ay0) : ax < 170 ? Math.max(66, ay0) : ay0, s = 5 + (Math.floor(now / 200) % 2);
-  if (HUDLOG) HUDLOG.push({ k: 'arrow', s: lbl || '', x: Math.round(ax) + HUDO.x, y: Math.round(ay) + HUDO.y });   // 1.9.2 test hook
+  const sub18 = ON18 ? arrowSub18(lbl, tx, ty) : '';
+  if (HUDLOG) HUDLOG.push({ k: 'arrow', s: lbl || '', x: Math.round(ax) + HUDO.x, y: Math.round(ay) + HUDO.y, sub: sub18 });   // 1.9.2 test hook
   ctx.fillStyle = c; ctx.beginPath(); ctx.moveTo(ax + Math.cos(a) * s, ay + Math.sin(a) * s); ctx.lineTo(ax + Math.cos(a + 2.4) * s, ay + Math.sin(a + 2.4) * s); ctx.lineTo(ax + Math.cos(a - 2.4) * s, ay + Math.sin(a - 2.4) * s); ctx.fill();
   if (lbl) text(ctx, lbl, Math.round(ax - Math.cos(a) * 10), Math.round(ay - Math.sin(a) * 10) - 3, c, 1, 'c');   // 0.8.0 marker letter
+  if (sub18) { const lx = clamp(Math.round(ax - Math.cos(a) * 10), 2 + sub18.length * 2, VW - 2 - sub18.length * 2); text(ctx, sub18, lx, Math.round(ay - Math.sin(a) * 10) + 4, c, 1, 'c'); }   // 1.18.0 distance (+ gate time)
 }
 /* ---------------- 1.9.1 POLISH (visual / UX only; locked by Matt) ----------------
    1) HELD WEAPON FACES THE AIM: every hand weapon (bow, xbow, wand, axe, spear, flail) is pre-rotated to one of 16 directions (22.5° steps) with
@@ -3590,10 +3636,11 @@ function drawHUDin(now) {
     else if (ev.k === 'escort') { tx = ev.x; ty = ev.y; c = PAL[10]; const hp = `HP ${Math.max(0, Math.ceil(ev.hp / ev.maxHp * 100))}%`;
       s = V ? (ev.pend != null && !ev.ms ? `${ev.v === 'mage' ? 'MAGE ESCORT' : 'CARAVAN'}: REACH IT  ${Math.max(0, Math.ceil(ev.pend))}S` : ev.ms ? `MAGE TRIAL D${ev.ms.d} ${Math.floor(Math.min(ev.need, ev.prog))}/${ev.need}S  ${hp}` : ev.v === 'mage' ? `MAGE T${ev.tier || 1} ${Math.floor(Math.min(ev.need, ev.prog))}/${ev.need}S  ${hp}` : `CARAVAN T${ev.tier || 1} ${hp}`) : (ev.v === 'mage' ? 'MAGE' : 'CARAVAN'); }
     else if (ev.e) { tx = ev.e.x; ty = ev.e.y; s = V ? `GOLD GOBLIN ${Math.ceil(ev.e.hp / ev.e.maxHp * 100)}%` : 'GOBLIN'; c = '#ffcd75'; }
-    if (s) { text(ctx, s, VW / 2, hudTop(), c, 1, 'c'); edgeArrow(tx, ty, c, now, ev.k === 'escort' ? 'E' : ''); evLine = true; } }
+    if (s) { text(ctx, s, VW / 2, hudTop(), c, 1, 'c'); edgeArrow(tx, ty, c, now, ev.k === 'escort' ? 'E' : ON18 && ev.k === 'well' ? 'R' : ''); evLine = true; } }
   else if (R.sig && !R.raid) { const g = R.sig, c = MSN.col[g.d - 1]; text(ctx, V ? `MAGE SIGIL D${g.d}: STEP ON IT  ${Math.ceil(g.t)}` : `SIGIL ${Math.ceil(g.t)}S`, VW / 2, hudTop(), c, 1, 'c'); edgeArrow(g.x, g.y, c, now, 'M'); evLine = true; }
   let feL = false; if (R.fe && !R.raid) { const c = FE[R.fe.k].c; text(ctx, V ? feLine() : FE[R.fe.k].name || 'EVENT', VW / 2, hudTop() + (evLine ? 8 : 0), c, 1, 'c'); edgeArrow(R.fe.x, R.fe.y, c, now, 'F'); feL = true; }
   const hy = hud8(now, hudTop() + (evLine ? 8 : 0) + (feL ? 8 : 0));
+  if (ON18) hud18(now);   // 1.18.0 foretold gates, flasks, heat, pings
   drawBanner(hy);
   if (input.stick) { const s = input.stick; ctx.globalAlpha = 0.5; ctx.strokeStyle = '#94b0c2'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(Math.round(s.ox - HUDO.x) + 0.5, Math.round(s.oy - HUDO.y) + 0.5, 20, 0, TAU); ctx.stroke(); ctx.fillStyle = '#f4f4f4'; ctx.fillRect(Math.round(s.ox - HUDO.x + input.mx * 18) - 4, Math.round(s.oy - HUDO.y + input.my * 18) - 4, 8, 8); ctx.globalAlpha = 1; }
   else if (R.t < 6 && V) { ctx.globalAlpha = 0.5 + 0.3 * Math.sin(now / 200); text(ctx, 'DRAG LEFT SIDE TO MOVE', VW * 0.22, VH - 16, '#94b0c2', 1, 'c'); ctx.globalAlpha = 1; }
@@ -3966,7 +4013,7 @@ function vBlocked(px, py) {   // keep trees off roads, plots, plaza, stream, pen
   return COTTAGES.some(([cx, cy]) => inBox(px, py, cx - 8, cy - 10, 30, 30));
 }
 const VTREES = (() => { const out = []; for (let i = 0; i < 900 && out.length < 64; i++) { const tx = 2 + Math.floor(hash(i, 41) * (VWW - 10)), ty = 6 + Math.floor(hash(i, 43) * (VWH - 16)); if (!vBlocked(tx + 3, ty + 4) && !out.some(([a, b]) => Math.abs(a - tx) < 8 && Math.abs(b - ty) < 7)) out.push([tx, ty, hash(i, 47)]); } return out; })();
-const vPts = (k, l) => k === 'portal' ? PORTAL_OLD.slice(1).filter(w => w <= PORTAL_W[clamp(l | 0, 0, PORTAL_W.length - 1)]).length : Math.min(l || 0, VILLAGE[k].levels.length);   // 1.14.0: the 11-band portal still scores its 6 classic milestones (21/31/41/61/81/101), so village N/34 is unchanged
+const vPts = (k, l) => ON18 && k === 'apoth' ? 0 : ON18 && k === 'watch' ? Math.min(l || 0, 1) : k === 'portal' ? PORTAL_OLD.slice(1).filter(w => w <= PORTAL_W[clamp(l | 0, 0, PORTAL_W.length - 1)]).length : Math.min(l || 0, VILLAGE[k].levels.length);   // 1.14.0: the 11-band portal still scores its 6 classic milestones (21/31/41/61/81/101), so village N/34 is unchanged
 const VMAX = 3 + VKEYS.reduce((n, k) => n + vPts(k, VILLAGE[k].levels.length), 0);
 function villageScore() { const h = save.home; return 2 + (h.smithy ? 1 : 0) + VKEYS.reduce((n, k) => n + vPts(k, h[k] || 0), 0); }
 function villageReady() { return VKEYS.some(villageCan) || HERO_IDS.some(heroCan) || (!save.home.smithy && save.gold >= HOME.smithy.cost); }
@@ -4465,7 +4512,7 @@ function vCard(k) {
   const icoImg = k === 'wall' && l >= 2 ? IMG.wall.s[0] : k === 'inn' && save.home.slayer ? IMG.inn.p[0] : B.icoV ? IMG[B.ico][B.icoV][0] : IMG[B.ico].n[0];
   const nm = B.names ? B.names[Math.max(0, l - 1)] : B.name;
   let body = `<p>${B.d}${B.deco ? ' <span class="tiny">(cosmetic)</span>' : ''}</p>`;
-  if (B.fx) body += `<p class="tiny">Now: <b>${B.fx(l)}</b>${l < max ? ` · next: <b>${B.fx(l + 1)}</b>` : ''}</p>`;
+  if (B.fx && B.bonus) body += bonus18(B, l, max); else if (B.fx) body += `<p class="tiny">Now: <b>${B.fx(l)}</b>${l < max ? ` · next: <b>${B.fx(l + 1)}</b>` : ''}</p>`;
   if (k === 'hall' && l) body += `<p>Hero: <b>${HEROES[save.hero].name}</b> · ${HERO_IDS.filter(id => save.heroes[id]).length}/${HERO_IDS.length} recruited</p><div class="row"><button class="pxbtn small go" data-go="heroes">CHOOSE HERO ▶</button></div>`;
   if (k === 'gate' && l) body += `<p>Open: <b>Bone Crypt</b>${l >= 2 ? ' and <b>Frost Spire</b>' : ''}. Pick the map with ⇄ next to START.</p><p class="tiny">${zoneLine('crypt').replace('Zone threat', 'Bone Crypt: zone threat')}${l >= 2 ? '<br>' + zoneLine('frost').replace('Zone threat', 'Frost Spire: zone threat') : ''}</p>${l < 2 ? `<p class="tiny">Tier 2 opens the <b>Frost Spire</b>: ${MAPS.frost.d}.</p>` : ''}`;
   if (k === 'armory' && LOAD.on) { const A = save.armory, cap = keepCap();   // 1.13.0 loadout slots + stash
@@ -4491,7 +4538,7 @@ function renderHome() {
   const cards = {
     tavern: () => bCard(tavIco, tavName, `LV ${h.tavern}/${HOME.tavern.max}`, `<p>Brews gold while you're away: <b>+${HOME.tavern.rate(h.tavern)}/min</b>, stores up to ${cap}.${h.inn ? ` <span class="tiny">(inn x${INN_MULT[h.inn]})</span>` : ''}</p><div class="bar gold"><i style="width:${tp / cap * 100}%"></i></div><p class="tiny">${tp}/${cap} stored</p><div class="row"><button id="bCollect" class="pxbtn small go" ${tp ? '' : 'disabled'}>COLLECT ${tp}G</button>${buyBtn('tavern', 'UPGRADE', h.tavern < HOME.tavern.max ? HOME.tavern.cost(h.tavern) : 0, h.tavern >= HOME.tavern.max)}</div>`, 'tavern'),
     hearth: () => bCard('hearth', h.fire ? VILLAGE.fire.names[h.fire - 1] : 'HEARTH', '', `<p>Extra lives <b>${h.life}/${HOME.life.max}</b>: revive at ${reviveHp() * 100}% HP once per life, each run.</p><p>Wave mend <b>${h.mend}/${HOME.mend.max}</b>: heal ${mendPct() * h.mend}% max HP at each new wave <span class="tiny">(${mendPct()}% per rank)</span>.</p><div class="row">${buyBtn('life', '+LIFE', h.life < HOME.life.max ? HOME.life.cost(h.life) : 0, h.life >= HOME.life.max)}${buyBtn('mend', '+MEND', h.mend < HOME.mend.max ? HOME.mend.cost(h.mend) : 0, h.mend >= HOME.mend.max)}</div>`, 'hearth'),
-    smithy: () => bCard('smithy', h.forge ? VILLAGE.forge.names[h.forge - 1] : 'SMITHY', h.smithy ? 'BUILT' : 'RUINS', h.smithy ? `<p>Pick your plain starting weapon${h.forge ? ` (<b>+${Math.round((FORGE_POW[h.forge] - 1) * 100)}% power</b> from the forge)` : ''}. If you kept a weapon (heirloom / Armory), this one comes along as a spare in your bag.</p><div class="row">${Object.keys(BASES).map(b => `<button class="pxbtn small${h.start === b ? ' go' : ''}" data-start="${b}">${BASES[b].name}</button>`).join('')}</div>` : `<p>Rebuild the forge to choose your starting weapon (Wand, Cleaver, Bow, Spear, Bolt Thrower or Flail).</p><div class="row">${buyBtn('smithy', 'BUILD', HOME.smithy.cost, false)}</div>`, 'smithy', h.smithy ? '' : ' unbuilt'),
+    smithy: () => bCard('smithy', h.forge ? VILLAGE.forge.names[h.forge - 1] : 'SMITHY', h.smithy ? 'BUILT' : 'RUINS', h.smithy ? `<p>Pick your plain starting weapon${h.forge ? ` (<b>+${Math.round((FORGE_POW[h.forge] - 1) * 100)}% power</b> from the forge)` : ''}. If you kept a weapon (heirloom / Armory), this one comes along as a spare in your bag.</p>${ON18 ? smithLine18() : ''}<div class="row">${Object.keys(BASES).map(b => `<button class="pxbtn small${h.start === b ? ' go' : ''}" data-start="${b}">${BASES[b].name}</button>`).join('')}</div>` : `<p>Rebuild the forge to choose your starting weapon (Wand, Cleaver, Bow, Spear, Bolt Thrower or Flail).</p>${ON18 ? smithLine18() : ''}<div class="row">${buyBtn('smithy', 'BUILD', HOME.smithy.cost, false)}</div>`, 'smithy', h.smithy ? '' : ' unbuilt'),
   };
   cards.workshop = workshopCard;   // 1.14.0
   let html = `<div class="sect tiny">FUNCTIONAL · buildings and tiers that change your runs</div>` + CARD_ORDER[0].map(k => cards[k] ? cards[k]() : vCard(k)).join('');
@@ -4922,6 +4969,7 @@ function renderSettings() { const el = $('#settings'); if (!el) return;
   const tip = $('#setLootTxt'); if (tip) tip.textContent = `Loot filter applies to ground and bag. Floor: ${FILTER_LBL[lootMin()].replace('LOOT: ', '')}. Below floor: never on ground, never auto-pick.${lootConvOn() ? ' Convert → gold.' : ''} Rare+ always keep.`;
   const bH = $('#bVerboseHud'); if (bH) { bH.textContent = verboseHud() ? 'ON' : 'OFF'; bH.classList.toggle('on', verboseHud()); }
   const ht = $('#setHudTxt'); if (ht) ht.textContent = verboseHud() ? 'weapon, gear pips, buffs, kill count, teaching text' : 'CLEAN: HP / gold / wave + arrows (default)';
+  const bVb = $('#bVib'); if (bVb) { const on = save.vibrate !== false; bVb.textContent = on ? 'ON' : 'OFF'; bVb.classList.toggle('on', on); }   // 1.18.0
   const bSh = $('#bShake'); if (bSh) { bSh.textContent = shakeOn() ? 'ON' : 'OFF'; bSh.classList.toggle('on', shakeOn()); }
   const sht = $('#setShakeTxt'); if (sht) sht.textContent = shakeOn() ? 'camera kick on hits (capped)' : 'no camera kick';
   $('#setAbout').innerHTML = `<b>PIXEL HORDE</b> v${VERSION} · design + playtests: Matt · pixel art, music and sound effects are all generated in-game (no third-party assets) · <a href="${PRIVACY_URL}" id="bPrivacy" class="privlink">privacy policy</a> · ads: <b>${adProvider()}</b> · store: <b>${billProvider()}</b>${adProvider() === 'stub' ? ' (debug stubs: no real ads, no real purchases)' : ''}`;
@@ -5024,7 +5072,7 @@ function workshopCard() { const sel = vSel === 'workshop';
   return `<div class="card ws${sel ? ' sel' : ''}" data-ws="1"><i style="background-image:url(${bigIcon(IMG.smithy.n[0], 5)})"></i><div class="bt"><h3>WORKSHOP <span class="tiny">FIELD KITS</span></h3><p>Stockpile: ${resLine(save.res, true)}</p><p class="tiny">Resources drop in runs (wood from wave 1, stone 5, oil 12, jewels 20, people 30; caravans bring a crate + refugees). Extract to bank the whole haul; die and half is lost. Every kit you own deploys one charge at the start of your next wave run.</p>${rows}</div></div>`; }
 /* mage trials */
 function msDmax(w) { return clamp(1 + Math.ceil(w / 4), 2, 6); }
-function spawnSigil(d) { if (!R || R.raid) return null; const [x, y] = ringPos(rnd(80, 110)); d = d || 1 + Math.floor(Math.random() * msDmax(R.wave)); R.sig = { x, y, d, t: MSN.life, m: MSN.life, warn: 0 };
+function spawnSigil(d) { if (!R || R.raid) return null; const [x, y] = objRing18(rnd(80, 110)); d = d || 1 + Math.floor(Math.random() * msDmax(R.wave)); R.sig = { x, y, d, t: MSN.life, m: MSN.life, warn: 0 };
   if (!R.sigSeen) { R.sigSeen = 1; R.bq.push({ s: `MAGE SIGIL D${d}: STEP ON IT TO START A TRIAL`, t: 2.2, c: MSN.col[d - 1] }); } sfx('event'); return R.sig; }
 function msStep(dt) { if (!R || R.raid || R.over) return; const g = R.sig;
   if (!g) { if (R.wave >= MSN.from && !(R.ev && R.ev.ms)) { R.sigT -= dt; if (R.sigT <= 0) spawnSigil(); } return; }
@@ -5121,7 +5169,7 @@ const FE = { from: 2, first: 40, every: [38, 58], life: 32,
   vein: { r: 22, need: 6, every: 1.5, c: '#94b0c2', n: 'RICH VEIN' },
   chest: { r: 16, need: 1.5, good: 0.55, c: '#b55088', n: 'CURSED CHEST' } };
 function feStart(k) { if (!R || R.raid || R.over || R.fe) return R && R.fe; const w = R.wave;
-  k = k || pick(FE.kinds.filter(q => w >= FE.from_[q] && q !== R.feLast)); R.feLast = k; const C = FE[k], [x, y] = ringPos(rnd(90, 125));
+  k = k || pick(FE.kinds.filter(q => w >= FE.from_[q] && q !== R.feLast)); R.feLast = k; const C = FE[k], [x, y] = objRing18(rnd(90, 125));
   const f = R.fe = { k, x, y, r: C.r, t: FE.life, prog: 0, need: C.need, st: 0, inside: false, tier: 0, pend: k === 'cache' || k === 'banner' ? 1 : 0, sT: 0, n: 0 };
   if (k === 'cache') { f.st = -1; f.drop = C.drop; f.t = FE.life + C.drop; }
   if (k === 'banner') f.t = C.limit;
@@ -5265,6 +5313,7 @@ function guideEntries() {
   add('status-open','Status effects','Raid OPEN / shield vulnerability','A boss recovery window rewards hitting it after a cast.', `Raid OPEN lasts ${RAID7.openT}s after an unshielded cast finishes and multiplies hit damage by ${RAID7.openX}. A separate raid shield-break vulnerability lasts ${RAID.vulnT}s at ×${RAID.vulnX}; immunity/phase-shift blocks hit damage entirely. These are separate flags, not stacking counters.`, `A 100 input hit against an OPEN boss supplies ${100*RAID7.openX} before other modifiers.`);
   add('status-artillery','Status effects','Artillery ground effects','Artillery ground can slow you, block heals, drain HP or make you take more damage; WEAK ground is not the outgoing-damage WEAKENED hex.', 'While artSlow timer is active, movement ×0.55; while artWeak is active, hurt() damage taken ×1.35 after DR and FRAGILE. Inside a patch, SLOW refreshes to 0.45s, NO REGEN and WEAK to 0.6s. Patch life = 2.2 + 0.3 × outpost tier seconds. Damage ground drains (4 + tier) HP/s directly, ignoring DR but never below 1 HP; invulnerability/dashing avoids that drain. No additive stack counter. Step out of the marked ground.', 'A normal 100 post-DR hit becomes 135 with artillery WEAK ground before any additional factors.');
   for (const [id,b] of Object.entries(BUFFS)) add('buff-'+id,'Status effects',b.name,b.d,`Source: event reward / run boon. One timer per kind; repeated grants add duration, not effect strength; temporary rewards use the awarded duration, RUN boons last the run. ${id==='multi'?'Adds 2 bonus projectiles / swings.':id==='leech'?'Adds 5 percentage points life steal.':id==='fury'?'Adds 20 percentage points attack speed.':id==='aegis'?'Adds '+guidePct(RUN9.aegis)+' points DR inside the 75% cap.':id==='slow'?'Nearby enemies move ×0.5 within 60px (except goblins).':id==='freeze'?'Periodic 6s pulse freezes nearby enemies within 70px for 1.2s (bosses 0.5s), plus 1 × weapon damage.':''}`,`One ${b.name} icon means one active timer, not two additive copies.`);
+  if (ON18) guide18(add);   // 1.18.0 THREATS + BURNING / FROZEN
   return E;
 }
 let guideOpen = false, guideFrom = null, guideFocus = null, guideSection = 'Stats';
@@ -5296,4 +5345,303 @@ document.addEventListener('click', e => { const b = e.target.closest('[data-guid
 
 window.__ph = { guideEntries, openGuide, closeGuide, renderGuide, get guideOpen() { return guideOpen; }, RPS, rpStakes, rpPre, rpGrant, rpWin, rpDiff, escArm, feArm, startEscort, RP, FE, rpTier, rpOffer, rpOpen, rpChoose, rpClose, rpResKind, feStart, feStep, feZap, feLine, drawFe, get pick() { return R && R.pick; }, RES, KITS, KIT_MAX, MSN, PORTAL_T, PORTAL_OLD, defRes, resHas, resPay, resAdd, resTxt, resLine, resRoll, resKillDrop, resBank, caravanRes, kitCraft, kitCan, kitsOwned, kitsDeploy, msStep, spawnSigil, startMission, missionPulse, missionAura, missionWin, msReward, msDmax, drawSigil, VOL, volleyStep, volleyFire, trailStep, projSplit, mirrorShot, shardRing, oathNova, dangerMark, FORK, RICO, SEC, FLAIL2, PROJB, UQ2, charSheet, openChar, closeChar, get charOpen() { return charOpen; }, tell, TELL, statDiff, statLinesHtml, CMP_ROWS, itemCompareHtml, loadoutGear, isLocked, setLocked, toggleLock, isUqItem, addShake, SHAKE, shakeOn, setShake, stPick, bindStashPick, spawnNuke, cleanW, refreshStats, ARMOR_SLOTS, LOAD, STASH_CAP, stashCap, armTier, salvageG, kitArm, canWear, stashTrim, stashToArm, armToStash, stashJunk, autoKit, loadEnd, saveOne, saveOneOk, saveOnePut, renderOutcome, renderStash, carryN, descItem, tile, get stSel() { return stSel; }, set stSel(v) { stSel = v; }, POI, VEN, BL, GUARD, LOB, ARMB, armBase, CAST110, RAIDS110, addPoison, shedPoison, poisonTick, envenom, guardMul, blightDeath, blightPop, lobRock, ACT110, chakThrow, dartsThrow, update110, drawPoisonTile, itemImp, itemIco, itemBase, canHeal, hexLeechMul, puffMask, cornerPuffs, fieldPuffs, driftZone, hexBolt, hexBoltHit, orbBoltStep, hexTouchCaster, hexCasterShoot, enemyShoot, cloudCanvas, RM, rmEff, rmStats, rmTier, rmBoardLine, HEX, HEXLOG, hexOn, applyHex, spawnHexOrb, hexPulse, inHexRing, spawnZone, inZone, updateHex, hexSummary, econX, econCost, hudLog, SA, VIEW_RULE, viewScale, readInsets, applyInsets, hudRect, resize, edgeArrow, get SCALE() { return SCALE; }, get DSCALE() { return DSCALE; }, get HUDO() { return HUDO; }, RCOL, wpnSprite, wpnDir, WPN_A0, WPN_DIRS, drawHeldWeapon, heartAlpha, heartBig, drawBuffIcons, buffSummary, pauseRunLine, txtLog, BUFF_GLYPH, MON, MONST, ADS, isPremium, adsOff, adProvider, billProvider, adDlg, adClose, buyPremium, grantPremium, restorePremium, reviveOffer, reviveEnd, doRevive, fallDown, backToCamp, STASH_CAP_P, premOf, isUq, uvOn, uqSeen, uqTotal, uvSweep, uniqToArm, uniqJunk, SUP, renderSupport, openSupport, closeSupport, supportAd, get stTab() { return stTab; }, set stTab(v) { stTab = v; }, openSettings, closeSettings, renderSettings, toggleSound, verboseHud, setVerboseHud, outMaxTier, outFam, evLogPush, openFeedback, closeFeedback, sendFeedback, captureFeedbackShot, get FB() { return FB; }, get setFrom() { return setFrom; }, AUD, MIX, SFXR, SFX_KINDS, THEMES, musPhrase, musBar, musWant, musIntensity, musTick, audWake, audApply, audGraph, audRender, audRenderSfx, audRenderMusic, toggleMusic, setMusBtns, sfx, get AC() { return AC; }, TUT_TIPS, TUT_PAGES, tutOn, tutHub, tutSkip, tutDone, tutStart, tutReplay, tutTick, tutRunEnd, defTut, get coach() { return coach; }, get tutPg() { return tutPg; }, ECON_: () => ECON, itemImg, olRows, silh, ellHW, pxEll, pxRing, dith, fireTele, fireBlast, drawVent, drawCaravan, drawLoot, ZONE_TAG, zoneLine, hpMult, SKILLS, SK, UNIQ, rollUnique, dropUnique, BASES, MELEE, WALL, NUKE, ORACLE, BLINK_T, UQ_P, raiseWall, pushOutWalls, wallsNear, segDist, updateWalls, spawnNuke, updateNukes, nukeCaster, tickBoom, oraclePulse, flailRing, attack, kill, hreqR, HREQ_R, renderSkills, get skSel() { return skSel; }, set skSel(v) { skSel = v; }, get hkSel() { return hkSel; }, set hkSel(v) { hkSel = v; }, MK, mkValue, mkBuyPrice, mkSellPrice, mkRollStock, openMarket, updateMarket, openMarketUI, closeMarketUI, renderMarket, mkBuy, mkSell, mkNoSell, get mkOpen() { return mkOpen; }, get mkSel() { return mkSel; }, set mkSel(v) { mkSel = v; }, wipeSave, wipeSummary, BANNER_MODES, bannerMode, bannerLayout, drawBanner, HUD_TOP, hudTop, HXS, hexN, hexStack, hexSlowMul, hexWeakMul, hexFragMul, hexRotDps, SHELL, shellable, shellStep, cycleBanner, setBannerBtns, SAVE_V, get VW() { return VW; }, get VH() { return VH; }, renderWipe, WIPE_WORD, SKEY, defSave, get paused() { return paused; }, hurt, dpsEst, tierOf, itemPow, TIER_TAG, IMP_T, AFX, WD, RUN9, INST9, RUN_BUFF, spawnWarden, wardenName, isGearWave, escapeBonus, distBonus, PORTAL_W, PORTAL9, portalWaves, portalCost, portalPick, setPortalPick, cyclePortal, newRun, eventWin, nextGear, get R() { return R; }, HTREE, HN, hx, hrank, hneed, need, addHeroXP, learnH, canLearnH, setSkTab, get skTab() { return skTab; }, renderHub, ETYPES, TABLES, castAt, pickType, spawnEnemy, spawnMini, hazardAt, hazardCell, ventPhase, roleCap, MINI_WAVE, update: dt => update(dt), get save() { return save; }, get mode() { return mode; }, step: (n, dt = STEP) => { for (let i = 0; i < n; i++) update(dt); }, dash, nova, useA, openBag, closeBag, bagEquip, bagDiscard, bagUnequip, get bagOpen() { return bagOpen; }, BAG_MAX, bagMax, rollWeapon, rollItem, rollArmor, dropWeapon, startRun, stats, gearPower, itemDelta, heirValue, setPause, input, persist, endRun, startEvent, hit, EV8, startEscort, spawnInst, openGate, escapeGate, updateDirector, majorsActive, canMajor, instCount, grantBuff, tavernPending, collectTavern, homeBuy, villageBuy, villageCan, villageScore, recruit, selectHero, setMap, mapsOpen, setHeir, setKeep, toggleKeep, bestKeep, keepCap, get keepPicks() { return keepPicks; }, get heir() { return save.armory[0] || null; }, setLootMin, setLootHide, lootMin, lootBlocked, lootConvOn, lootPurgeGround, lootSyncMin, stView, ST_TABS, nearbyLoot, groundEquip, groundTake, groundJunk, junkWorse, worseInBag, KEEP_CAP, renderBag, startKit, showScreen, migrate, get heirPick() { return keepPicks.length ? keepPicks[0] : -1; }, get heirOpts() { return heirOpts; }, BUFFS, HOME, HEROES, VILLAGE, SLOTS, ARMOR, MAPS, VERSION, PRIVACY_URL, BETA_BANNER, openExt, IMG, VPLOTS, drawVillage, drawPlot, roadTier, homeTier, ROAD_N, VPROPS, MILL, VCACHE, vGroundC, vHouse, lanternPts, VMAX, VWW, VWH, vCam, panTo, plotScreen, vAnimate, mendPct, reviveHp, INN_MULT, villageNext, PLOT_OF, get vSel() { return vSel; }, set vSel(v) { vSel = v; }, renderHome, RAIDS, RAID_BY, RAID_IDS, RAID, RPCT, RA, RENTER, raidOpenFor, raidKills, raidTotal, raidRec, raidKit, startRaid, renderRaids, raidSummary, spawnRaidBoss, raidEnterPhase, updateRaid, raidHpGate, raidKill, raidBoardVisible, raidReady, inEll, inArena, rZone, rLine, raidTop, raidHud, renderUnlocks, vCard, UNLOCKS,
   ECON, GATE7, TRIAL_TXT, isGateWave, nextGateWave, gateUnseal, gateKill, updateGate, gateLine, OUT7, outTier, outName, outGrow, outShellX, outShielded, outMaxTier, outFam, instKill, updateInst, AXE7, axeHalf, axeChop, SETS, setCount, setLine, afxLine, heirDetailHtml, renderLost, renderHeir, RAID7, rHurt, gainXP, addXP, get heirFocus() { return heirFocus; }, set heirFocus(v) { heirFocus = v; } };   // 1.7.0
+/* ================= 1.18.0 systems (all gated on ON18; raids are untouched) ================= */
+const on18 = () => ON18 && R && !R.raid;
+const compass18 = (dx, dy) => { const a = Math.atan2(dy, dx), i = ((Math.round(a / (Math.PI / 4)) % 8) + 8) % 8; return ['EAST', 'SOUTH-EAST', 'SOUTH', 'SOUTH-WEST', 'WEST', 'NORTH-WEST', 'NORTH', 'NORTH-EAST'][i]; };
+const meters18 = (x, y) => Math.round(Math.hypot(x - R.p.x, y - R.p.y) / 10);
+function driftA18() { return DRIFT18.a[R.map] ?? 0; }
+function aheadA18() { R.drift18 = R.drift18 || { n: 0, ahead: 0 }; const ah = Math.random() < DRIFT18.bias; R.drift18.n++; if (ah) R.drift18.ahead++; return ah ? driftA18() + rnd(-DRIFT18.cone, DRIFT18.cone) : Math.random() * TAU; }
+function objRing18(d) { if (!on18()) return ringPos(d); const a = aheadA18(); return free18(R.p.x + Math.cos(a) * d, R.p.y + Math.sin(a) * d, 24); }
+function farPos18(a, b) { const ang = aheadA18(), d = rnd(a, b); return free18(R.p.x + Math.cos(ang) * d, R.p.y + Math.sin(ang) * d * 0.8, 30); }
+function init18() {
+  if (!on18()) return; const p = R.p;
+  R.m18 = { heat: 0, peak: 0, ax: p.x, ay: p.y, stay: 0, packT: HEAT18.packEvery, biteT: 0.5, wizT: 12, fireT: FIRE18.tick, burnT: 0.5, warned: false, seen: new Set(), packs: 0, fireHits: 0, burnHits: 0, fireMob: 0 };
+  R.ice18 = new Map(); R.cr18 = new Map(); R.zone18 = []; R.spell18 = []; R.burn18 = []; R.gateRe = null; R.gateFore = null; R.mkFore = null; R.ping18 = [];
+  const ap = clamp(save.home.apoth | 0, 0, 3); R.flask18 = { n: FLASK18.n[ap], max: FLASK18.n[ap], heal: FLASK18.heal[ap], used: 0 };
+  R.bq.push({ s: `THE HORDE DRIFTS ${DRIFT18.name[R.map] || 'EAST'}: OBJECTIVES LIE AHEAD`, t: 2.4, c: HEAT18.col[R.map] || '#ffcd75' });
+}
+/* ---- solids: crypt streets (walls / buildings) + frost ice blocks ---- */
+function crChunk18(i, j) {
+  const key = i + ',' + j; let L = R.cr18.get(key); if (L) return L; L = [];
+  const C = CRYPT18.C, x0 = i * C, y0 = j * C, h = hash(i * 7 + 3, j * 13 - 5), h2 = hash(i * 11 - 1, j * 5 + 9), W = 8;
+  const add = (x, y, w, hh, k) => L.push({ x: x0 + x, y: y0 + y, w, h: hh, k, key: key + ':' + L.length });
+  const near = i >= -1 && i <= 0 && j >= -1 && j <= 0;   // the four blocks around the start crossroads stay open graveyard
+  L.pat = near ? 'yard0' : h < 0.30 ? 'maus' : h < 0.55 ? 'walled' : h < 0.80 ? 'corr' : 'grave';
+  if (L.pat === 'maus') add(60 + Math.round(h2 * 8), 56, 100, 92, 'bld');
+  else if (L.pat === 'walled') { const a = 32, b = 192, g = 34, m = (a + b) / 2, ns = h2 < 0.5;
+    // top / bottom walls (gap in the middle when ns), left / right walls (gap when !ns)
+    if (ns) { add(a, a, m - g / 2 - a, W, 'wall'); add(m + g / 2, a, b - m - g / 2, W, 'wall'); add(a, b - W, m - g / 2 - a, W, 'wall'); add(m + g / 2, b - W, b - m - g / 2, W, 'wall'); add(a, a, W, b - a, 'wall'); add(b - W, a, W, b - a, 'wall'); }
+    else { add(a, a, b - a, W, 'wall'); add(a, b - W, b - a, W, 'wall'); add(a, a, W, m - g / 2 - a, 'wall'); add(a, m + g / 2, W, b - m - g / 2, 'wall'); add(b - W, a, W, m - g / 2 - a, 'wall'); add(b - W, m + g / 2, W, b - m - g / 2, 'wall'); }
+    add(m - 10, m - 8, 20, 14, 'bld'); }
+  else if (L.pat === 'corr') { if (h2 < 0.5) { add(36, 74, 152, 10, 'wall'); add(36, 140, 152, 10, 'wall'); } else { add(74, 36, 10, 152, 'wall'); add(140, 36, 10, 152, 'wall'); } }
+  else if (L.pat === 'grave') { add(70, 70, 10, 10, 'wall'); add(144, 144, 10, 10, 'wall'); }
+  R.cr18.set(key, L); return L;
+}
+function iceRect18(cx, cy) {
+  if (Math.abs(cx) <= 2 && Math.abs(cy) <= 2) return null; const h = hash(cx * 5 + 17, cy * 9 - 23); if (h >= ICE18.dens) return null;
+  const key = 'i' + cx + ',' + cy, st = R.ice18.get(key); if (st && st.hp <= 0) return null; const C = ICE18.cell, wide = hash(cx + 101, cy - 77) < 0.4, w = wide ? 30 : 18, hh = 12;
+  return { x: cx * C + 24 - w / 2 + Math.round((hash(cx, cy + 5) - 0.5) * 10), y: cy * C + 24 - hh / 2 + Math.round((hash(cx - 9, cy + 13) - 0.5) * 14), w, h: hh, k: 'ice', key, cx, cy };
+}
+function sol18(x0, y0, x1, y1) {   // every solid rect overlapping the box
+  const out = []; if (!on18()) return out;
+  if (R.map === 'crypt') { const C = CRYPT18.C; for (let i = Math.floor(x0 / C); i <= Math.floor(x1 / C); i++) for (let j = Math.floor(y0 / C); j <= Math.floor(y1 / C); j++) for (const s of crChunk18(i, j)) if (s.x < x1 && s.x + s.w > x0 && s.y < y1 && s.y + s.h > y0) out.push(s); }
+  else if (R.map === 'frost') { const C = ICE18.cell; for (let i = Math.floor((x0 - 20) / C); i <= Math.floor((x1 + 20) / C); i++) for (let j = Math.floor((y0 - 10) / C); j <= Math.floor((y1 + 10) / C); j++) { const s = iceRect18(i, j); if (s && s.x < x1 && s.x + s.w > x0 && s.y < y1 && s.y + s.h > y0) out.push(s); } }
+  return out;
+}
+const inSolid18 = (x, y, r = 0) => sol18(x - r, y - r, x + r, y + r).some(s => x + r > s.x && x - r < s.x + s.w && y + r > s.y && y - r < s.y + s.h);
+function free18(x, y, r = 6) {   // nearest free spot (spiral search, then the nearest road)
+  if (!on18() || !inSolid18(x, y, r)) return [x, y];
+  for (let k = 1; k <= 40; k++) { const a = k * 2.39996, d = 10 * Math.sqrt(k) * 2.2, nx = x + Math.cos(a) * d, ny = y + Math.sin(a) * d; if (!inSolid18(nx, ny, r)) return [nx, ny]; }
+  const C = CRYPT18.C; return [Math.round(x / C) * C, y];
+}
+function pushOut18(o, r) {   // circle vs rects; returns the last push normal (or null)
+  if (!on18()) return null; let n = null;
+  for (const s of sol18(o.x - r, o.y - r, o.x + r, o.y + r)) {
+    const qx = clamp(o.x, s.x, s.x + s.w), qy = clamp(o.y, s.y, s.y + s.h), dx = o.x - qx, dy = o.y - qy, d = Math.hypot(dx, dy);
+    if (d >= r) continue;
+    if (d > 0.001) { o.x = qx + dx / d * r; o.y = qy + dy / d * r; n = { x: dx / d, y: dy / d, s }; }
+    else { const l = o.x - s.x, rr = s.x + s.w - o.x, t = o.y - s.y, b = s.y + s.h - o.y, m = Math.min(l, rr, t, b);
+      if (m === l) { o.x = s.x - r; n = { x: -1, y: 0, s }; } else if (m === rr) { o.x = s.x + s.w + r; n = { x: 1, y: 0, s }; } else if (m === t) { o.y = s.y - r; n = { x: 0, y: -1, s }; } else { o.y = s.y + s.h + r; n = { x: 0, y: 1, s }; } }
+  }
+  return n;
+}
+function iceHit18(s, dmg) {
+  if (!s || s.k !== 'ice') return false; let st = R.ice18.get(s.key); if (!st) R.ice18.set(s.key, st = { hp: ICE18.hp(R.wave), m: ICE18.hp(R.wave) });
+  if (st.hp <= 0) return false; st.hp -= dmg; st.fl = 0.12; R.iceDmg18 = (R.iceDmg18 || 0) + dmg;
+  const cx = s.x + s.w / 2, cy = s.y + s.h / 2; if (Math.random() < 0.6) burst(cx, cy - 4, PAL[11], 4, 30, 0.3);
+  if (st.hp <= 0) { st.hp = 0; R.iceBroken18 = (R.iceBroken18 || 0) + 1; burst(cx, cy - 4, PAL[11], 22, 70, 0.6); burst(cx, cy - 4, PAL[12], 12, 50, 0.5); sfx('kill'); addText(cx, cy - 12, 'SHATTER', PAL[11]); }
+  return true;
+}
+function iceArea18(x, y, rad, dmg) { if (!on18() || R.map !== 'frost') return 0; let n = 0; for (const s of sol18(x - rad, y - rad, x + rad, y + rad)) { const qx = clamp(x, s.x, s.x + s.w), qy = clamp(y, s.y, s.y + s.h); if (Math.hypot(qx - x, qy - y) < rad && iceHit18(s, dmg)) n++; } return n; }
+function iceAuto18() {   // attack() found no enemy: chip the nearest ice block in reach
+  if (!on18() || R.map !== 'frost') return false; const p = R.p, S = R.S, w = R.weapon, mel = !!MELEE[w.base], reach = mel ? Math.min(60, S.range * 1.15) : Math.min(140, S.range);
+  let best = null, bd = 1e9; for (const s of sol18(p.x - reach, p.y - reach, p.x + reach, p.y + reach)) { const qx = clamp(p.x, s.x, s.x + s.w), qy = clamp(p.y, s.y, s.y + s.h), d = Math.hypot(qx - p.x, qy - p.y); if (d < reach && d < bd) { bd = d; best = { s, qx, qy }; } }
+  if (!best) return false; const a = Math.atan2(best.qy - p.y, best.qx - p.x); p.aimA = a; p.face = Math.cos(a) < 0 ? -1 : 1;
+  if (mel) { R.FX.push({ k: 'thrust', x: p.x, y: p.y - 3, a, r: Math.max(12, bd), t: 0.14, m: 0.14 }); iceHit18(best.s, S.baseDmg * 1.5); sfx('hit'); }
+  else { R.P.push({ k: 'arrow', x: p.x, y: p.y - 4, vx: Math.cos(a) * 240, vy: Math.sin(a) * 240, r: 2, dmg: S.baseDmg, pierce: 0, life: 0.9, hit: new Set() }); sfx('shoot'); }
+  return true;
+}
+function proj18(b, mine) {   // a shot touching a solid stops (player shots chip ice)
+  if (!on18() || R.map === 'ash') return false; const gx = b.x, gy = b.y + 4, s = sol18(gx - 1, gy - 1, gx + 1, gy + 1).find(q => gx >= q.x && gx <= q.x + q.w && gy >= q.y && gy <= q.y + q.h);
+  if (!s) return false; R.projBlocked18 = (R.projBlocked18 || 0) + 1; burst(b.x, b.y, s.k === 'ice' ? PAL[11] : '#566c86', 4, 30, 0.25);
+  if (mine && s.k === 'ice') iceHit18(s, b.dmg || R.S.baseDmg);
+  return true;
+}
+function enemyWall18(e, dt, sp) {   // enemies are pushed out of solids and slide along them toward you; bosses smash ice
+  if (e.hexo || e.type === 'bat' || e.type === 'wisp') return;
+  const n = pushOut18(e, Math.max(3, e.r)); if (!n) return; e.wallT18 = (e.wallT18 || 0) + dt;
+  if (n.s.k === 'ice' && (e.boss || e.raidBoss)) { iceHit18(n.s, 1e9); return; }
+  const tx = -n.y, ty = n.x, dx = R.p.x - e.x, dy = R.p.y - e.y, sg = tx * dx + ty * dy >= 0 ? 1 : -1, v = (e.spd || 20) * 0.8 * dt;
+  if (n.s.k === 'ice' && hash(e.id, 3) < 0.35) return;   // some mobs get stuck on the ice
+  e.x += tx * sg * v; e.y += ty * sg * v; pushOut18(e, Math.max(3, e.r));
+}
+/* ---- fire pits (ash) ---- */
+function pitCell18(cx, cy) {
+  if (Math.abs(cx) <= 1 && Math.abs(cy) <= 1) return null; const h = hash(cx * 3 + 11, cy * 5 - 7); if (h >= FIRE18.dens) return null;
+  if (hazardCell('ash', cx, cy)) return null; const C = 64;
+  return { x: cx * C + 32 + Math.round((hash(cx + 3, cy) - 0.5) * 20), y: cy * C + 32 + Math.round((hash(cx, cy + 3) - 0.5) * 20), r: FIRE18.r };
+}
+function pitAt18(x, y) { if (!on18() || R.map !== 'ash') return null; const C = 64, cx = Math.floor(x / C), cy = Math.floor(y / C);
+  for (let i = cx - 1; i <= cx + 1; i++) for (let j = cy - 1; j <= cy + 1; j++) { const P = pitCell18(i, j); if (P && Math.hypot((x - P.x) / P.r, (y - P.y) / (P.r * 0.6)) < 1) return P; } return null; }
+function pitFind18(x, y, rad = 400) { const C = 64; let best = null, bd = 1e9; for (let i = Math.floor((x - rad) / C); i <= Math.floor((x + rad) / C); i++) for (let j = Math.floor((y - rad) / C); j <= Math.floor((y + rad) / C); j++) { const P = pitCell18(i, j); if (P) { const d = Math.hypot(P.x - x, P.y - y); if (d < bd) { bd = d; best = P; } } } return best; }
+/* ---- artillery burning ground ---- */
+function burnGround18(s) { if (!on18()) return; const t = ART18.burnT + ART18.burnPer * (s.ot || 1); R.burn18.push({ x: s.x, y: s.y, r: s.r * ART18.burnR, t, m: t, dps: s.dmg * ART18.burnX, tick: 0 }); }
+/* ---- the wizard ---- */
+const wizN18 = () => R.E.reduce((n, e) => n + (e.type === 'wizard' && e.hp > 0 ? 1 : 0), 0);
+function spawnWiz18(x, y) { if (x === undefined) { const a = aheadA18(), d = spawnDist(); [x, y] = free18(R.p.x + Math.cos(a) * d, R.p.y + Math.sin(a) * d, 6); }
+  const e = spawnEnemy('wizard', x, y); e.wT = rnd(2, 3.5); e.wN = Math.floor(Math.random() * 3);
+  if (!R.wizSeen18) { R.wizSeen18 = 1; R.bq.push({ s: 'A WIZARD JOINS THE HORDE', t: 2, c: '#3b5dc9' }, { s: 'ITS SPELLS MARK THE GROUND - STEP OUT', t: 2, c: '#ffcd75' }); } return e; }
+function barWiz18(e, ot) { if (ON18 && ot >= WIZ18.barFrom && e.packs % WIZ18.barEvery === 0 && wizN18() < WIZ18.cap(R.wave) + 1) { const m = spawnWiz18(e.x + 14, e.y + 12); m.fromB = e.id; } }
+function wizStep18(e, dt, d, ux, uy, pd, sp) {
+  if (e.cast > 0) { e.cast -= dt; return [0, ux, uy]; }   // channelling: the warning is already on the ground
+  if (d < WIZ18.keep - 25) { ux = -ux; uy = -uy; sp *= 0.7; } else if (d < WIZ18.keep + 25) { const sd = Math.sin(e.ph + R.t * 0.4) > 0 ? 1 : -1, nx = -uy * sd, ny = ux * sd; ux = nx; uy = ny; sp *= 0.5; }
+  e.wT -= dt; if (e.wT <= 0) { if (pd < WIZ18.range && onScreen(e, 4)) wizCast18(e); else e.wT = 0.8; }
+  return [sp, ux, uy];
+}
+function wizCast18(e, k) {
+  const p = R.p, pool = ['cloud', 'freeze', 'weak'].concat(R.wave >= WIZ18.wallsFrom ? ['fwall', 'lwall'] : []);
+  k = k || pool[(e.wN++) % pool.length]; const tx = p.x + (input.mx || 0) * 18, ty = p.y + (input.my || 0) * 12, wall = k === 'fwall' || k === 'lwall', tele = wall ? WIZ18.wallTele : WIZ18.tele;
+  const S = { k, x: tx, y: ty, t: tele, m: tele, src: e, dmg: e.dmg, r: k === 'cloud' ? WIZ18.cloud.r : k === 'freeze' ? WIZ18.freeze.r : WIZ18.weak.r };
+  if (wall) { const a = Math.atan2(ty - e.y, tx - e.x), nx = -Math.sin(a), ny = Math.cos(a), L = (k === 'fwall' ? WIZ18.fwall.len : WIZ18.lwall.len) / 2; Object.assign(S, { x1: tx - nx * L, y1: ty - ny * L, x2: tx + nx * L, y2: ty + ny * L }); }
+  R.spell18.push(S); e.cast = tele; e.wT = rnd(WIZ18.cd[0], WIZ18.cd[1]) * (R.wave >= 30 ? 0.8 : 1); R.wizCasts18 = (R.wizCasts18 || 0) + 1; sfx('wind'); return S;
+}
+const segD18 = (px, py, s) => { const vx = s.x2 - s.x1, vy = s.y2 - s.y1, L2 = vx * vx + vy * vy || 1, t = clamp(((px - s.x1) * vx + (py - s.y1) * vy) / L2, 0, 1); return Math.hypot(px - (s.x1 + vx * t), py - (s.y1 + vy * t)); };
+const inEl18 = (x, y, z) => Math.hypot((x - z.x) / z.r, (y - z.y) / (z.r * 0.7)) < 1;
+function spellLand18(S) {
+  const p = R.p, safe = p.inv > 0 || p.dash; R.spellLand18 = (R.spellLand18 || 0) + 1;
+  if (S.k === 'cloud') R.zone18.push({ k: 'noregen', x: S.x, y: S.y, r: S.r, t: WIZ18.cloud.life, m: WIZ18.cloud.life });
+  else if (S.k === 'freeze') { R.zone18.push({ k: 'chill', x: S.x, y: S.y, r: S.r, t: WIZ18.freeze.life, m: WIZ18.freeze.life }); burst(S.x, S.y, PAL[11], 16, 50); }
+  else if (S.k === 'weak') { R.FX.push({ k: 'ring', x: S.x, y: S.y, r: S.r, t: 0.35, m: 0.35, c: HEX.st.weak.c }); if (inEl18(p.x, p.y, S) && !safe) { applyHex('weak', WIZ18.weak.dur, 'wizard'); R.wizHits18 = (R.wizHits18 || 0) + 1; } }
+  else if (S.k === 'fwall') R.zone18.push({ k: 'fwall', x1: S.x1, y1: S.y1, x2: S.x2, y2: S.y2, t: WIZ18.fwall.life, m: WIZ18.fwall.life, dmg: S.dmg * WIZ18.fwall.x, tick: 0 });
+  else if (S.k === 'lwall') { R.FX.push({ k: 'zap', x1: S.x1, y1: S.y1, x2: S.x2, y2: S.y2, t: 0.25 }); addShake(3); sfx('zap');
+    if (segD18(p.x, p.y, S) < 9 && !safe) { hurt(S.dmg * WIZ18.lwall.x); R.wizHits18 = (R.wizHits18 || 0) + 1; } }
+}
+/* ---- objective pings ---- */
+function vib18(ms) { R.vib18 = (R.vib18 || 0) + 1; if (save.vibrate === false) return false; try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) {} R.vibOn18 = (R.vibOn18 || 0) + 1; return true; }
+function objSpawn18(lbl, x, y, c) {
+  if (!on18()) return; const s = `NEW: ${lbl} ${meters18(x, y)}M ${compass18(x - R.p.x, y - R.p.y)}`;
+  R.bq.push({ s, t: 2.2, c: c || '#ffcd75' }); R.ping18.push({ x, y, c: c || '#ffcd75', t: 1.6, m: 1.6 }); sfx('ping'); vib18(40);
+  (R.pingLog18 = R.pingLog18 || []).push(s); if (typeof window.__ph !== 'undefined' && window.__ph) (window.__ph.PING18 = window.__ph.PING18 || []).push(s);
+}
+function objList18() {   // [ref, label, x, y, colour] for every live objective
+  const L = [], g = R.gate; if (g) L.push([g, 'EXIT GATE', g.x, g.y, g.sealed ? PAL[2] : PAL[11]]);
+  if (R.mk) L.push([R.mk, 'MARKET', R.mk.x, R.mk.y, '#ffcd75']);
+  const ev = R.ev; if (ev) { if (ev.k === 'well') L.push([ev, 'REGEN WELL', ev.x, ev.y, '#a7f070']); else if (ev.k === 'escort') L.push([ev, ev.v === 'mage' ? 'MAGE ESCORT' : 'CARAVAN', ev.x, ev.y, PAL[10]]); else if (ev.e) L.push([ev, 'GOLD GOBLIN', ev.e.x, ev.e.y, '#ffcd75']); }
+  if (R.sig) L.push([R.sig, 'MAGE SIGIL', R.sig.x, R.sig.y, '#b55088']);
+  if (R.fe) L.push([R.fe, FE[R.fe.k].name || 'EVENT', R.fe.x, R.fe.y, FE[R.fe.k].c]);
+  for (const e of R.E) if (e.inst && e.hp > 0) L.push([e, outName(e), e.x, e.y, e.inst === 'barracks' ? PAL[2] : PAL[3]]);
+  return L;
+}
+/* ---- gates: countdown, hold-open, one replacement ahead ---- */
+function gate18Init(g) { if (!on18()) return g; const sc = SCOUT18.gate[clamp(save.home.watch | 0, 0, 3)]; g.open = (g.re18 ? GATE18.reLife : GATE7.life) + sc; g.m18 = g.open; g.scout18 = sc; R.gateFore = null; return g; }
+function gateMissed18(g) { if (!on18()) return; if (!g.re18 && !g.esc) { R.gateRe = { at: R.t + GATE18.reDelay, w: R.wave }; R.bq.push({ s: `ANOTHER GATE WILL RISE AHEAD IN ${GATE18.reDelay}S`, t: 2.2, c: PAL[11] }); } R.gatesMissed18 = (R.gatesMissed18 || 0) + 1; }
+function openGateRe18() { R.gateRe = null; R.reOpen18 = true; const g = openGate(); R.reOpen18 = false; if (g) { g.re18 = 1; gate18Init(g); R.banner = { s: 'A NEW EXIT GATE RISES AHEAD', t: 2.4, c: PAL[11] }; } return g; }
+/* ---- update ---- */
+function heatX18() { return R && R.m18 && !R.raid ? 1 + HEAT18.spawnX * R.m18.heat : 1; }
+function move18() { if (!on18() || !R.m18) return 1; let m = hexOn('chill') ? WIZ18.freeze.x : 1; if (R.map === 'frost' && R.m18.heat > HEAT18.biteAt) m *= 1 - HEAT18.frostSlow * (R.m18.heat - HEAT18.biteAt) / (1 - HEAT18.biteAt); return m; }
+function update18(dt) {
+  if (!on18()) return; if (!R.m18) init18(); const H = R.m18, p = R.p, S = R.S, w = R.wave;
+  // momentum heat
+  if (Math.hypot(p.x - H.ax, p.y - H.ay) > HEAT18.r) { H.ax = p.x; H.ay = p.y; H.stay = 0; } else H.stay += dt;
+  if (H.stay > HEAT18.grace && !R.mk?.inside) H.heat = Math.min(1, H.heat + HEAT18.rise * dt); else H.heat = Math.max(0, H.heat - HEAT18.decay * dt);
+  H.peak = Math.max(H.peak, H.heat);
+  if (H.heat >= HEAT18.biteAt && !H.warned) { H.warned = true; R.banner = { s: `${HEAT18.name[R.map]} GATHER - KEEP MOVING`, t: 2, c: HEAT18.col[R.map] }; }
+  if (H.heat < 0.2) H.warned = false;
+  if (H.heat >= HEAT18.packAt) { H.packT -= dt; if (H.packT <= 0) { H.packT = HEAT18.packEvery; H.packs++; const TB = TABLES[R.map] || TABLES.ash, sw = TB.swarm.filter(t => inCast(R.map, t, w)), type = pick(sw.length ? sw : ['slime']), n = HEAT18.pack(w), a0 = Math.random() * TAU, d = spawnDist() * 0.9;
+      for (let i = 0; i < n; i++) { const a = a0 + i * 0.25; spawnEnemy(type, p.x + Math.cos(a) * d, p.y + Math.sin(a) * d); } } } else H.packT = HEAT18.packEvery;
+  if (H.heat > HEAT18.biteAt) { H.biteT -= dt; if (H.biteT <= 0) { H.biteT = 0.5; const k = (H.heat - HEAT18.biteAt) / (1 - HEAT18.biteAt);
+      if (R.map === 'ash' && p.inv <= 0) { p.hp -= S.maxHp * HEAT18.ashBurn * k * 0.5; H.bitN = (H.bitN || 0) + 1; if (p.hp <= 0) hurt(0.01); }
+      else if (R.map === 'crypt' && p.hp > 1) { p.hp = Math.max(1, p.hp - S.maxHp * HEAT18.fogRot * k * 0.5); H.bitN = (H.bitN || 0) + 1; } } }
+  const hc = HEAT18.col[R.map] || '#ef7d57';
+  if (H.heat > 0.15 && Math.random() < H.heat * 0.9) { const a = Math.random() * TAU, d = rnd(10, 90); R.PT.push({ x: p.x + Math.cos(a) * d, y: p.y + Math.sin(a) * d * 0.7, vx: rnd(-6, 6), vy: R.map === 'frost' ? rnd(8, 20) : -rnd(8, 18), t: 0.9, m: 0.9, c: hc, s: 1 }); }
+  if (Math.random() < 0.25) { const da = driftA18(), ox = rnd(-VW / 2, VW / 2), oy = rnd(-VH / 2, VH / 2); R.PT.push({ x: p.x + ox, y: p.y + oy, vx: Math.cos(da) * 26, vy: Math.sin(da) * 26, t: 1.2, m: 1.2, c: R.map === 'frost' ? '#f4f4f4' : R.map === 'crypt' ? '#566c86' : '#94b0c2', s: 1 }); }
+  // fire pits + burning ground
+  H.fireT -= dt; if (H.fireT <= 0) { H.fireT = FIRE18.tick;
+    if (R.map === 'ash') { if (!p.dash && p.inv <= 0 && pitAt18(p.x, p.y)) { hurt(S.maxHp * FIRE18.pct + FIRE18.flat(w)); applyHex('burn', FIRE18.burnT, 'zone'); H.fireHits++; burst(p.x, p.y - 2, PAL[3], 8, 40); }
+      for (const e of R.E) if (!e.inst && !e.boss && !e.raidBoss && e.hp > 0 && pitAt18(e.x, e.y)) { hit(e, S.baseDmg * FIRE18.mobX, { proc: false, noCrit: true, col: PAL[3] }); H.fireMob++; } } }
+  for (const b of R.burn18) { b.t -= dt; b.tick -= dt; if (b.tick <= 0 && inEl18(p.x, p.y, b)) { b.tick = 0.5; if (!p.dash && p.inv <= 0) { hurt(b.dps * 0.5); applyHex('burn', 1.5, 'zone'); H.burnHits++; } } if (Math.random() < 0.3) R.PT.push({ x: b.x + rnd(-b.r, b.r) * 0.8, y: b.y + rnd(-b.r, b.r) * 0.5, vx: 0, vy: -18, t: 0.4, m: 0.4, c: Math.random() < 0.5 ? PAL[3] : PAL[4], s: 1 }); }
+  R.burn18 = R.burn18.filter(b => b.t > 0);
+  if (hexOn('burn')) { H.burnT -= dt; if (H.burnT <= 0) { H.burnT = 0.5; if (p.hp > 1) p.hp = Math.max(1, p.hp - S.maxHp * FIRE18.burnPct * 0.5); if (Math.random() < 0.8) R.PT.push({ x: p.x + rnd(-3, 3), y: p.y - 6, vx: 0, vy: -20, t: 0.3, m: 0.3, c: PAL[3], s: 1 }); } }
+  // wizards + spells + spell zones
+  if (w >= WIZ18.from) { H.wizT -= dt; if (H.wizT <= 0) { H.wizT = rnd(WIZ18.every[0], WIZ18.every[1]); if (wizN18() < WIZ18.cap(w)) spawnWiz18(); } }
+  for (const s of R.spell18) { if (!s.src || s.src.hp <= 0 || !R.E.includes(s.src)) { s.t = -1; s.fizz = 1; R.spellFizz18 = (R.spellFizz18 || 0) + 1; burst(s.x, s.y, '#5d275d', 10, 30); continue; } s.t -= dt; if (s.t <= 0) spellLand18(s); }
+  R.spell18 = R.spell18.filter(s => s.t > 0);
+  for (const z of R.zone18) { z.t -= dt; if (z.t <= 0) continue;
+    if (z.k === 'noregen' && inEl18(p.x, p.y, z)) applyHex('noregen', 0.5, 'zone');
+    else if (z.k === 'chill' && inEl18(p.x, p.y, z)) applyHex('chill', 0.5, 'zone');
+    else if (z.k === 'fwall') { z.tick -= dt; if (z.tick <= 0 && segD18(p.x, p.y, z) < 8 && !p.dash && p.inv <= 0) { z.tick = 0.4; hurt(z.dmg); applyHex('burn', FIRE18.burnT, 'zone'); R.wizHits18 = (R.wizHits18 || 0) + 1; }
+      if (Math.random() < 0.6) { const t = Math.random(); R.PT.push({ x: z.x1 + (z.x2 - z.x1) * t, y: z.y1 + (z.y2 - z.y1) * t, vx: 0, vy: -24, t: 0.4, m: 0.4, c: Math.random() < 0.5 ? PAL[3] : PAL[4], s: 2 }); } } }
+  R.zone18 = R.zone18.filter(z => z.t > 0);
+  for (const st of R.ice18.values()) if (st.fl > 0) st.fl -= dt;
+  // gates: foretelling (scout tower) + the replacement gate
+  const sc = clamp(save.home.watch | 0, 0, 3), lead = SCOUT18.lead[sc];
+  if (R.gateRe && R.t >= R.gateRe.at && !R.gate && !R.over) openGateRe18();
+  if (R.gateRe && R.gate && !R.gate.re18 && R.gate.w !== R.gateRe.w) R.gateRe = null;   // the regular gate came first
+  const gW = nextGateWave(R.wave), gAt = (gW - 1) * WAVE_LEN; if (lead > 0 && !R.gateFore && gW > R.wave && gAt > R.t && gAt - R.t <= lead) { const [x, y] = farPos18(GATE7.far[0], GATE7.far[1]); R.gateFore = { x, y, at: gAt }; R.foreN18 = (R.foreN18 || 0) + 1; R.bq.push({ s: `SCOUTS: AN EXIT GATE RISES IN ${Math.ceil(gAt - R.t)}S`, t: 2, c: PAL[11] }); }
+  if (lead > 0 && !R.mk && !R.mkFore && R.mkT > R.t && R.mkT - R.t <= lead) { const [x, y] = farPos18(MK.near[0], MK.near[1]); R.mkFore = { x, y, at: R.mkT }; R.bq.push({ s: `SCOUTS: A MARKET SETS UP IN ${Math.ceil(R.mkT - R.t)}S`, t: 2, c: '#ffcd75' }); }
+  if (R.gateFore && R.gateFore.at < R.t - 30) R.gateFore = null; if (R.mkFore && (R.mk || R.mkFore.at < R.t - 30)) R.mkFore = null;
+  // flask
+  const F = R.flask18; if (F && F.n > 0 && p.hp > 0 && p.hp < S.maxHp * FLASK18.at && canHeal() && !R.over) { F.n--; F.used++; const hv = Math.round(S.maxHp * F.heal); p.hp = Math.min(S.maxHp, p.hp + hv); addText(p.x, p.y - 16, `+${hv} FLASK`, PAL[5], true); burst(p.x, p.y - 4, PAL[5], 20, 50); sfx('revive'); }
+  // new objective pings
+  for (const [ref, lbl, x, y, c] of objList18()) if (!H.seen.has(ref)) { H.seen.add(ref); objSpawn18(lbl, x, y, c); }
+  for (const q of R.ping18) q.t -= dt; R.ping18 = R.ping18.filter(q => q.t > 0);
+}
+/* ---- drawing ---- */
+function draw18Terrain(X, Y, now, cx, cy) {
+  if (!on18()) return; const x0 = cx - 40, y0 = cy - 40, x1 = cx + VW + 40, y1 = cy + VH + 60;
+  if (R.map === 'crypt') { const C = CRYPT18.C, rd = CRYPT18.road;
+    ctx.fillStyle = '#2b2436'; for (let i = Math.floor(x0 / C); i <= Math.floor(x1 / C) + 1; i++) ctx.fillRect(Math.round(X(i * C - rd)), 0, rd * 2, VH);
+    for (let j = Math.floor(y0 / C); j <= Math.floor(y1 / C) + 1; j++) ctx.fillRect(0, Math.round(Y(j * C - rd)), VW, rd * 2);
+    ctx.fillStyle = '#3a3046'; for (let i = Math.floor(x0 / C); i <= Math.floor(x1 / C) + 1; i++) for (let yy = Math.floor(y0 / 8) * 8; yy < y1; yy += 8) { const o = (yy / 8) & 1 ? 4 : 0; for (let xx = -rd + o; xx < rd; xx += 8) ctx.fillRect(Math.round(X(i * C + xx)), Math.round(Y(yy)), 7, 7); }
+    for (let j = Math.floor(y0 / C); j <= Math.floor(y1 / C) + 1; j++) for (let xx = Math.floor(x0 / 8) * 8; xx < x1; xx += 8) { const o = (xx / 8) & 1 ? 4 : 0; for (let yy = -rd + o; yy < rd; yy += 8) ctx.fillRect(Math.round(X(xx)), Math.round(Y(j * C + yy)), 7, 7); }
+    for (let i = Math.floor(x0 / C); i <= Math.floor(x1 / C); i++) for (let j = Math.floor(y0 / C); j <= Math.floor(y1 / C); j++) { const L = crChunk18(i, j);
+      if (L.pat === 'grave' || L.pat === 'yard0' || L.pat === 'walled') for (let t = 0; t < 6; t++) { const tx = i * C + 48 + Math.floor(hash(i * 31 + t, j) * 128), ty = j * C + 48 + Math.floor(hash(i, j * 29 + t) * 128); if (inSolid18(tx, ty, 4)) continue; const sx = Math.round(X(tx)), sy = Math.round(Y(ty)); ctx.fillStyle = '#0b0b14'; ctx.fillRect(sx - 3, sy - 7, 6, 8); ctx.fillStyle = '#566c86'; ctx.fillRect(sx - 2, sy - 6, 4, 6); ctx.fillStyle = '#94b0c2'; ctx.fillRect(sx - 1, sy - 5, 2, 1); } } }
+  for (const s of sol18(x0, y0, x1, y1)) { const sx = Math.round(X(s.x)), sy = Math.round(Y(s.y));
+    if (s.k === 'wall') { const hh = 12; ctx.fillStyle = '#0b0b14'; ctx.fillRect(sx - 1, sy - hh - 1, s.w + 2, s.h + hh + 2); ctx.fillStyle = '#3e3550'; ctx.fillRect(sx, sy - hh, s.w, s.h + hh); ctx.fillStyle = '#5a4d70'; ctx.fillRect(sx, sy - hh, s.w, s.h);
+      ctx.fillStyle = '#2a2338'; for (let yy = 4; yy < hh; yy += 4) for (let xx = (yy & 4 ? 0 : 3); xx < s.w; xx += 6) ctx.fillRect(sx + xx, sy - hh + s.h + yy - 4, 1, 3); }
+    else if (s.k === 'bld') { const hh = 22; ctx.fillStyle = '#0b0b14'; ctx.fillRect(sx - 1, sy - hh - 1, s.w + 2, s.h + hh + 2); ctx.fillStyle = '#333c57'; ctx.fillRect(sx, sy + s.h - hh, s.w, hh); ctx.fillStyle = '#5d275d'; ctx.fillRect(sx, sy - hh, s.w, s.h); ctx.fillStyle = '#7a3a7a'; for (let xx = 2; xx < s.w; xx += 6) ctx.fillRect(sx + xx, sy - hh, 2, s.h);
+      ctx.fillStyle = '#0b0b14'; const dw = Math.min(10, s.w / 3); ctx.fillRect(sx + Math.round(s.w / 2 - dw / 2), sy + s.h - 12, Math.round(dw), 12); ctx.fillStyle = PAL[12]; if (s.w > 30) { ctx.fillRect(sx + Math.round(s.w / 2) - 2, sy + s.h - hh + 3, 4, 3); ctx.fillStyle = '#0b0b14'; ctx.fillRect(sx + Math.round(s.w / 2) - 1, sy + s.h - hh + 4, 1, 1); ctx.fillRect(sx + Math.round(s.w / 2) + 1, sy + s.h - hh + 4, 1, 1); } }
+    else if (s.k === 'ice') { const st = R.ice18.get(s.key), f = st ? st.hp / st.m : 1, hh = 8; ctx.fillStyle = '#0b0b14'; ctx.fillRect(sx - 1, sy - hh - 1, s.w + 2, s.h + hh + 2); ctx.fillStyle = st && st.fl > 0 ? '#f4f4f4' : '#41a6f6'; ctx.fillRect(sx, sy + s.h - hh, s.w, hh); ctx.fillStyle = st && st.fl > 0 ? '#f4f4f4' : '#73eff7'; ctx.fillRect(sx, sy - hh, s.w, s.h);
+      ctx.fillStyle = '#f4f4f4'; ctx.fillRect(sx + 1, sy - hh + 1, s.w - 2, 1); ctx.fillRect(sx + 2, sy - hh + 3, 2, 2);
+      if (f < 0.75) { ctx.fillStyle = '#29366f'; ctx.fillRect(sx + Math.round(s.w * 0.3), sy - hh + 2, 1, s.h + hh - 3); if (f < 0.45) { ctx.fillRect(sx + Math.round(s.w * 0.6), sy - hh + 4, 1, s.h + hh - 6); ctx.fillRect(sx + Math.round(s.w * 0.3), sy - 2, Math.round(s.w * 0.3), 1); } } } }
+  if (R.map === 'ash') { const C = 64; for (let i = Math.floor(x0 / C); i <= Math.floor(x1 / C); i++) for (let j = Math.floor(y0 / C); j <= Math.floor(y1 / C); j++) { const P = pitCell18(i, j); if (!P) continue; const px = Math.round(X(P.x)), py = Math.round(Y(P.y));
+      ctx.fillStyle = '#566c86'; ctx.beginPath(); ctx.ellipse(px, py, P.r + 3, P.r * 0.6 + 2, 0, 0, TAU); ctx.fill(); ctx.fillStyle = '#1a1c2c'; ctx.beginPath(); ctx.ellipse(px, py, P.r, P.r * 0.6, 0, 0, TAU); ctx.fill();
+      ctx.fillStyle = '#b13e53'; ctx.beginPath(); ctx.ellipse(px, py, P.r - 3, P.r * 0.6 - 2, 0, 0, TAU); ctx.fill();
+      for (let f = 0; f < 7; f++) { const ph = (now / 140 + f * 1.7 + i) % 3, fx = px - P.r + 4 + ((f * 5 + i * 3) % (P.r * 2 - 6)), fh = 3 + Math.round(4 * Math.abs(Math.sin(now / 120 + f))); ctx.fillStyle = ph < 1 ? PAL[4] : PAL[3]; ctx.fillRect(fx, py - fh, 2, fh); }
+      ctx.globalAlpha = 0.18 + 0.08 * Math.sin(now / 200 + i); ctx.fillStyle = PAL[3]; ctx.beginPath(); ctx.ellipse(px, py - 4, P.r + 8, P.r * 0.6 + 6, 0, 0, TAU); ctx.fill(); ctx.globalAlpha = 1; } }
+}
+function draw18Ground(X, Y, now) {
+  if (!on18()) return;
+  for (const b of R.burn18) { const bx = X(b.x), by = Y(b.y), a = Math.min(1, b.t / 0.6); ctx.globalAlpha = 0.35 * a; ctx.fillStyle = PAL[3]; ctx.beginPath(); ctx.ellipse(bx, by, b.r, b.r * 0.7, 0, 0, TAU); ctx.fill(); ctx.globalAlpha = 0.8 * a;
+    for (let f = 0; f < 8; f++) { const fa = f / 8 * TAU + b.x, fx = Math.round(bx + Math.cos(fa) * b.r * 0.6), fy = Math.round(by + Math.sin(fa) * b.r * 0.4), fh = 2 + Math.round(3 * Math.abs(Math.sin(now / 110 + f))); ctx.fillStyle = f & 1 ? PAL[4] : PAL[3]; ctx.fillRect(fx, fy - fh, 2, fh); } ctx.globalAlpha = 1; }
+  for (const z of R.zone18) { const a = Math.min(1, z.t / 0.5);
+    if (z.k === 'fwall' || z.k === 'lwall') { const L = Math.hypot(z.x2 - z.x1, z.y2 - z.y1) || 1; for (let i = 0; i <= L; i += 5) { const fx = Math.round(X(z.x1 + (z.x2 - z.x1) * i / L)), fy = Math.round(Y(z.y1 + (z.y2 - z.y1) * i / L)), fh = 4 + Math.round(4 * Math.abs(Math.sin(now / 90 + i))); ctx.globalAlpha = a; ctx.fillStyle = '#0b0b14'; ctx.fillRect(fx - 1, fy - fh - 1, 4, fh + 2); ctx.fillStyle = (i / 5) & 1 ? PAL[4] : PAL[3]; ctx.fillRect(fx, fy - fh, 2, fh); } ctx.globalAlpha = 1; continue; }
+    const col = z.k === 'noregen' ? HEX.st.noregen.c : PAL[11], zx = X(z.x), zy = Y(z.y); ctx.globalAlpha = 0.28 * a; ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(zx, zy, z.r, z.r * 0.7, 0, 0, TAU); ctx.fill(); ctx.globalAlpha = 0.8 * a; ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.setLineDash([3, 2]); ctx.lineDashOffset = now / 80; ctx.beginPath(); ctx.ellipse(zx, zy, z.r, z.r * 0.7, 0, 0, TAU); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+    drawHexIcon(z.k, Math.round(zx) - 2, Math.round(zy) - 3, col); }
+  for (const s of R.spell18) { const f = 1 - s.t / s.m, col = s.k === 'cloud' ? HEX.st.noregen.c : s.k === 'freeze' ? PAL[11] : s.k === 'weak' ? HEX.st.weak.c : s.k === 'fwall' ? PAL[3] : PAL[11], blink = Math.floor(now / 90) % 2;
+    if (s.x1 !== undefined) { ctx.strokeStyle = col; ctx.globalAlpha = 0.35 + 0.5 * f; ctx.lineWidth = 3; ctx.setLineDash([4, 3]); ctx.lineDashOffset = -now / 50; ctx.beginPath(); ctx.moveTo(X(s.x1), Y(s.y1)); ctx.lineTo(X(s.x2), Y(s.y2)); ctx.stroke(); ctx.setLineDash([]); ctx.lineWidth = 1; ctx.globalAlpha = 1;
+      if (blink) text(ctx, s.k === 'fwall' ? 'FIRE WALL' : 'LIGHTNING', Math.round(X(s.x)), Math.round(Y(s.y)) - 14, col, 1, 'c'); continue; }
+    const zx = X(s.x), zy = Y(s.y); ctx.globalAlpha = 0.15 + 0.25 * f; ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(zx, zy, s.r * f, s.r * 0.7 * f, 0, 0, TAU); ctx.fill(); ctx.globalAlpha = 0.9; ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.beginPath(); ctx.ellipse(zx, zy, s.r, s.r * 0.7, 0, 0, TAU); ctx.stroke(); ctx.globalAlpha = 1;
+    if (blink) dangerMark(zx, zy - 4, col, 1, now); }
+  for (const [, , x, y, c] of objList18()) { const ph = (now % 1200) / 1200, bx = Math.round(X(x)), by = Math.round(Y(y)); ctx.strokeStyle = c; ctx.globalAlpha = 0.6 * (1 - ph); ctx.lineWidth = 1; ctx.beginPath(); ctx.ellipse(bx, by, 10 + 34 * ph, (10 + 34 * ph) * 0.7, 0, 0, TAU); ctx.stroke(); ctx.globalAlpha = 1; }
+  const g = R.gate; if (g && g.m18) { const gx = Math.round(X(g.x)), gy = Math.round(Y(g.y)), f = clamp(g.open / g.m18, 0, 1), fad = g.open < GATE18.fade, c = fad ? (Math.floor(now / 150) % 2 ? PAL[2] : '#ffcd75') : PAL[11];
+    ctx.strokeStyle = '#0b0b14'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(gx, gy - 12, 22, 0, TAU); ctx.stroke(); ctx.strokeStyle = c; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(gx, gy - 12, 22, -Math.PI / 2, -Math.PI / 2 + TAU * f); ctx.stroke(); ctx.lineWidth = 1;
+    text(ctx, fmtT(Math.max(0, g.open)), gx, gy - 80, c, 1, 'c'); if (fad) { ctx.globalAlpha = 0.25 + 0.2 * Math.sin(now / 70); ctx.fillStyle = '#1a1c2c'; ctx.fillRect(gx - 14, gy - 34, 28, 34); ctx.globalAlpha = 1; text(ctx, 'FADING', gx, gy + 10, c, 1, 'c'); } }
+  if (R.gateFore) { const fx = Math.round(X(R.gateFore.x)), fy = Math.round(Y(R.gateFore.y)); ctx.strokeStyle = '#ffcd75'; ctx.setLineDash([2, 3]); ctx.beginPath(); ctx.ellipse(fx, fy, GATE7.r, GATE7.r * 0.7, 0, 0, TAU); ctx.stroke(); ctx.setLineDash([]); text(ctx, `GATE IN ${Math.max(0, Math.ceil(R.gateFore.at - R.t))}S`, fx, fy - 10, '#ffcd75', 1, 'c'); }
+}
+function draw18Top(X, Y, now) {
+  if (!on18()) return;
+  for (const [, , x, y, c] of objList18()) { const bx = Math.round(X(x)), by = Math.round(Y(y)), a = 0.25 + 0.2 * Math.sin(now / 220); ctx.globalAlpha = a; ctx.fillStyle = c; ctx.fillRect(bx - 1, by - 110, 3, 96); ctx.globalAlpha = a * 0.5; ctx.fillRect(bx - 3, by - 110, 7, 96); ctx.globalAlpha = 1; }
+  const H = R.m18; if (H && H.heat > 0.05) { const c = HEAT18.col[R.map] || PAL[3], a = Math.min(0.42, H.heat * 0.42); ctx.globalAlpha = a; ctx.fillStyle = c; const e = 6 + Math.round(H.heat * 18);
+    ctx.fillRect(0, 0, VW, e); ctx.fillRect(0, VH - e, VW, e); ctx.fillRect(0, 0, e, VH); ctx.fillRect(VW - e, 0, e, VH); ctx.globalAlpha = a * 0.5; ctx.fillRect(0, 0, VW, VH); ctx.globalAlpha = 1;
+    if (H.heat > 0.2) { ctx.strokeStyle = c; ctx.globalAlpha = 0.5; ctx.setLineDash([3, 4]); ctx.beginPath(); ctx.ellipse(X(H.ax), Y(H.ay), HEAT18.r, HEAT18.r * 0.7, 0, 0, TAU); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1; } }
+}
+function hud18(now) {
+  if (!on18()) return; const p = R.p;
+  if (R.gateFore) edgeArrow(R.gateFore.x, R.gateFore.y, '#ffcd75', now, 'G?');
+  if (R.mkFore) edgeArrow(R.mkFore.x, R.mkFore.y, '#ffcd75', now, 'M?');
+  const F = R.flask18; if (F && F.max) for (let i = 0; i < F.max; i++) { const x = 80 + R.lives * 7 + i * 6, on = i < F.n; ctx.fillStyle = '#0b0b14'; ctx.fillRect(x, 12, 5, 7); ctx.fillStyle = on ? '#b13e53' : '#333c57'; ctx.fillRect(x + 1, 14, 3, 4); ctx.fillStyle = on ? '#f4f4f4' : '#566c86'; ctx.fillRect(x + 2, 12, 1, 2); }
+  const H = R.m18; if (H && H.heat > 0.1) { const c = HEAT18.col[R.map] || PAL[3]; text(ctx, `${HEAT18.name[R.map]} ${Math.round(H.heat * 100)}% - MOVE ON`, VW / 2, VH - 18, c, 1, 'c'); if (HUDLOG) HUDLOG.push({ k: 'heat', s: HEAT18.name[R.map], v: H.heat }); }
+  const ox = FVW / 2 - HUDO.x, oy = FVH / 2 - HUDO.y;
+  for (const q of R.ping18) { const sx = clamp(ox + q.x - p.x, 14, VW - 14), sy = clamp(oy + q.y - p.y, 14, VH - 14), f = 1 - q.t / q.m; ctx.strokeStyle = q.c; ctx.globalAlpha = 1 - f; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(sx, sy, 6 + 26 * f, 0, TAU); ctx.stroke(); ctx.lineWidth = 1; ctx.globalAlpha = 1; }
+}
+function arrowSub18(lbl, tx, ty) { if (!on18() || !lbl) return ''; const m = `${meters18(tx, ty)}M`;
+  if (lbl === 'G' && R.gate) return `${m} ${fmtT(Math.max(0, R.gate.open))}`; if (lbl === 'G?' && R.gateFore) return `IN ${Math.max(0, Math.ceil(R.gateFore.at - R.t))}S`; if (lbl === 'M?' && R.mkFore) return `IN ${Math.max(0, Math.ceil(R.mkFore.at - R.t))}S`; return m; }
+/* ---- village ---- */
+const mkt18 = () => ON18 ? MKT18[clamp(save.home.market | 0, 0, 2)] : 1;
+function bonus18(B, l, max) { return `<p class="tiny bonus18">BONUS T${l}: <b>${B.fx(l)}</b>${l < max ? ` · NEXT T${l + 1}: <b>${B.fx(l + 1)}</b>` : ' · <b>MAX</b>'}</p>`; }
+function smithLine18() { const t = smithT18(); return `<p class="tiny bonus18">BONUS: <b>upgrade costs -${Math.round(SMITH18[t] * 100)}%</b> (village builds, tavern, hearth)${t < 3 ? ` · NEXT: <b>-${Math.round(SMITH18[t + 1] * 100)}%</b> ${t === 0 ? '(build the smithy)' : '(forge tier)'}` : ' · <b>MAX</b>'}</p>`; }
+function guide18(add) {
+  add('status-burning', 'Status effects', 'BURNING (you)', 'Fire pits, burning artillery ground and wizard fire walls set you alight.', `Burns ${FIRE18.burnPct * 100}% max HP per second in 0.5s ticks while active (cannot kill on its own, floor 1 HP). Fire pits: ${FIRE18.burnT}s.`, 'Step off the fire; it fades in seconds.');
+  add('status-frozen', 'Status effects', 'FROZEN (you)', 'Standing in a wizard freeze patch.', `Move speed ×${WIZ18.freeze.x} while inside and 0.5s after leaving.`, 'Dash out of the patch.');
+  add('threat-wizard', 'Threats', 'WIZARD', 'A robed caster on foot (not on a catapult). Keeps its distance and marks the ground where you stand before every spell.', `From wave ${WIZ18.from}, one every ${WIZ18.every[0]}-${WIZ18.every[1]}s (max ${WIZ18.cap(1)}/${WIZ18.cap(20)}/${WIZ18.cap(35)} at waves 8/20/35); barracks T${WIZ18.barFrom}+ add one every ${WIZ18.barEvery}rd pack. Cast every ${WIZ18.cd[0]}-${WIZ18.cd[1]}s; ${WIZ18.tele}s warning (${WIZ18.wallTele}s for walls). Spells: NO REGEN cloud r${WIZ18.cloud.r} ${WIZ18.cloud.life}s · FREEZE patch r${WIZ18.freeze.r} ${WIZ18.freeze.life}s · WEAKNESS burst r${WIZ18.weak.r} ${WIZ18.weak.dur}s · wave ${WIZ18.wallsFrom}+: FIRE WALL ${WIZ18.fwall.len}px ${WIZ18.fwall.life}s, LIGHTNING WALL ${WIZ18.lwall.len}px ${WIZ18.lwall.x * 100}% damage. Killing it fizzles its pending spells.`, 'Step out of the mark; kill it first.');
+  add('threat-barracks', 'Threats', 'BARRACKS LADDER', 'Enemy outposts grow a tier about every 10 waves until razed; from ' + OUT7.names.barracks[WIZ18.barFrom - 1] + ' (T' + WIZ18.barFrom + ') a purple wizard tower stands beside it.', `Tiers: ${OUT7.names.barracks.join(' > ')}. Packs every ${OUT7.barEvery[0]}s (T1) down to ${OUT7.barEvery[7]}s (T8); from T${WIZ18.barFrom} every ${WIZ18.barEvery}rd pack brings a WIZARD.`, 'Raze outposts early.');
+  add('threat-artillery', 'Threats', 'CATAPULT / CANNON', 'Artillery is pure damage now: big impacts that leave the ground burning.', `Burning ground r = ${ART18.burnR * 100}% of the blast, lasts ${ART18.burnT}s + ${ART18.burnPer}s per tier, ${ART18.burnX * 100}% of shell damage per second in 0.5s ticks + BURNING. Ladder: CATAPULT, CATAPULT SQUAD, HEAVY CAT, CANNON, CANNON SQUAD, SIEGE CANNON, BOMBARD, GRAND BATTERY.`, 'Raze it or keep moving.');
+  add('threat-heat', 'Threats', 'LINGERING (heat)', 'Staying in one spot builds map heat: more spawns and a map hazard. It fades once you move on.', `Grace ${HEAT18.grace}s inside ${HEAT18.r}px, then +${(HEAT18.rise * 100).toFixed(1)}%/s; decays ${HEAT18.decay * 100}%/s. Spawn rate ×(1 + ${HEAT18.spawnX} × heat); from ${HEAT18.packAt * 100}% a pack every ${HEAT18.packEvery}s; from ${HEAT18.biteAt * 100}%: Ash CINDERS up to ${HEAT18.ashBurn * 100}% max HP/s, Crypt GRAVE FOG rot up to ${HEAT18.fogRot * 100}%/s, Frost WHITEOUT up to -${HEAT18.frostSlow * 100}% move.`, 'Follow the drift: objectives lie ahead.');
+  add('threat-pits', 'Threats', 'FIRE PITS (Ash)', 'Burning pits in the ash wastes. Stepping in hurts for real.', `Every ${FIRE18.tick}s inside: ${FIRE18.pct * 100}% max HP + (1 + 0.2 × wave), through damage reduction, + BURNING ${FIRE18.burnT}s. Monsters take ${FIRE18.mobX * 100}% weapon damage per tick. Dash over them.`, '');
+  add('threat-ice', 'Threats', 'ICE BLOCKS (Frost)', 'Solid ice blocks: they stop you, monsters and projectiles. Break them.', `HP ${ICE18.hp(0)} + 10 × wave (fixed when first hit). Your shots, melee swings (when no foe is in reach), Nova and dash chip them; bosses smash straight through. Ice sheets still slow.`, '');
+  add('threat-crypt', 'Threats', 'CRYPT STREETS', 'The Bone Crypt is a walled city: mausoleums, yards and corridors between cobbled roads.', `${CRYPT18.C}px blocks with ${CRYPT18.road * 2}px roads. Walls block you, monsters and shots; nothing spawns inside them; the caravan keeps to the roads.`, '');
+  add('threat-gates', 'Threats', 'FLEETING GATES', 'Exit gates fade. A missed gate is gone, but one more rises ahead later, then the regular schedule carries on.', `Life ${GATE7.life}s + Scout Tower (+${SCOUT18.gate.slice(1).join('/')}s). Missed: a replacement after ${GATE18.reDelay}s (${GATE18.reLife}s life + scout). Standing inside an unsealed gate holds it open.`, 'The edge arrow shows distance and time left.');
+}
+/* ---- crypt caravan keeps to the roads ---- */
+function road18(ev) { if (!on18() || R.map !== 'crypt' || !ev || ev.v !== 'caravan') return; const C = CRYPT18.C, ax = Math.round(ev.x / C) * C, ay = Math.round(ev.y / C) * C, L = EV8.caravan.dist, dir = Math.random() < 0.5 ? -1 : 1;
+  if (Math.abs(ev.y - ay) < Math.abs(ev.x - ax)) { ev.y = ay; ev.sx = ev.x; ev.sy = ay; ev.tx = ev.x + dir * L; ev.ty = ay; } else { ev.x = ax; ev.sx = ax; ev.sy = ev.y; ev.tx = ax; ev.ty = ev.y + dir * L; } ev.road18 = 1; }
+/* ---- 1.18.0 wiring (runs once at load) ---- */
+if (ON18) {
+  HEX.st.burn = { name: 'BURNING', d: 'fire damage over time', c: '#ef7d57', ic: '..1...111.11111.111.1.1.1' };
+  HEX.st.chill = { name: 'FROZEN', d: 'move speed -55%', c: '#73eff7', ic: '1.1.1.111.11111.111.1.1.1' };
+  ETYPES.wizard = { name: 'WIZARD', role: 'wizard', hp: 60, spd: 22, dmg: 12, xp: 8, r: 5, spr: 'wizard', col: 9, kbr: 0.6, hint: 'ITS SPELLS MARK THE GROUND - STEP OUT' };
+  ACT110.wizard = wizStep18;
+  OUT7.names.catapult = ['CATAPULT', 'CATAPULT SQUAD', 'HEAVY CAT', 'CANNON', 'CANNON SQUAD', 'SIEGE CANNON', 'BOMBARD', 'GRAND BATTERY'];
+  OUT7.family = ['cat', 'cat', 'cat', 'cannon', 'cannon', 'cannon', 'cannon', 'cannon'];
+  OUT7.gfx = [0, 0, 0, 0, 0, 0, 0, 0];   // artillery = pure damage + burning ground (status effects moved to the wizard)
+  CARD_ORDER[1] = CARD_ORDER[1].filter(k => k !== 'market' && k !== 'watch'); CARD_ORDER[0].splice(CARD_ORDER[0].indexOf('forge') + 1, 0, 'market', 'watch', 'apoth');
+  { const G = VPLOTS.find(P => P.k === 'garden'); G.cards.push('apoth'); PLOT_OF.apoth = G; }
+  { const tb = $('#guideTabs'); if (tb && !tb.querySelector('[data-section="Threats"]')) { tb.insertAdjacentHTML('beforeend', '<button class="pxbtn small" data-section="Threats">THREATS</button>'); const b = tb.querySelector('[data-section="Threats"]'); b.onclick = () => { guideSection = 'Threats'; $('#guideSearch').value = ''; renderGuide(); }; } }
+  { const r = $('#setVibRow'); if (r) r.hidden = false; const b = $('#bVib'); if (b) b.onclick = () => { save.vibrate = save.vibrate === false; persist(); sfx('swap'); if (save.vibrate) { try { navigator.vibrate && navigator.vibrate(40); } catch (e) {} } renderSettings(); toast(save.vibrate ? 'Vibration on' : 'Vibration off'); }; }
+}
+else { const r = $('#setVibRow'); if (r) r.remove(); }   // the 1.17 suites see the old Settings rows
+Object.assign(window.__ph, { PRICE181, ON18, DRIFT18, HEAT18, GATE18, FIRE18, ICE18, CRYPT18, ART18, WIZ18, MKT18, SMITH18, FLASK18, SCOUT18, init18, update18, heatX18, move18, objRing18, farPos18, free18, sol18, inSolid18, pushOut18, crChunk18, iceRect18, iceHit18, iceArea18, iceAuto18, proj18,
+  pitCell18, pitAt18, pitFind18, burnGround18, spawnWiz18, wizCast18, spellLand18, wizN18, objSpawn18, objList18, gate18Init, gateMissed18, openGateRe18, mkt18, smithT18, disc18, bonus18, smithLine18, road18, vib18, compass18, meters18, arrowSub18,
+  vCard: typeof vCard === 'function' ? vCard : undefined, mkSellPrice, villageScore: typeof villageScore === 'function' ? villageScore : undefined, VMAX, VILLAGE, HOME, CARD_ORDER, VPLOTS, PLOT_OF, migrate, defSave, SAVE_V, ETYPES, HEX, attack, novaBlast, openMarket, openGate });
 })();

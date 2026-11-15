@@ -1,8 +1,8 @@
-# Pixel Horde — web playtest (1.17.1)
+# Pixel Horde — web playtest (1.18.1)
 
 Play in a browser: **https://mjonathandom-sudo.github.io/pixel-horde-play/**
 
-This is a static copy of Pixel Horde 1.17.1 (vc45) for PC friends who don't have Android. It is the same game as the closed-beta APK, served as a website.
+This is a static copy of Pixel Horde 1.18.1 (vc48) for PC friends who don't have Android. It is the same game as the closed-beta APK, served as a website.
 
 ## Controls
 
